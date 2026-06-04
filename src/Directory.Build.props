@@ -1,0 +1,26 @@
+<Project>
+
+	<PropertyGroup>
+		<IsAzureDevOps Condition="'$(TF_BUILD)' == 'true'">true</IsAzureDevOps>
+		<IsGitHubActions Condition="'$(GITHUB_ACTIONS)' == 'true'">true</IsGitHubActions>
+		<IsCI Condition="'$(CI)' == 'true' Or '$(TF_BUILD)' == 'true' Or '$(GITHUB_ACTIONS)' == 'true'">true</IsCI>
+		<IsLocalBuild Condition="'$(IsCI)' != 'true'">true</IsLocalBuild>
+	</PropertyGroup>
+
+	<PropertyGroup Label="Local Release Version" Condition="'$(IsLocalBuild)' == 'true' And '$(Configuration)'=='Release'">
+		<VersionPrefix Condition="'$(VersionPrefix)' == ''">1.0.100</VersionPrefix>
+		<VersionSuffix Condition="'$(VersionSuffix)' == ''">-rc</VersionSuffix>
+	</PropertyGroup>
+
+	<Import Project="..\build\Author.props" />
+	<Import Project="..\build\Icon.props" />
+	<Import Project="..\build\SourceLink.props" />
+	<Import Project="..\build\PackageInfo.props" />
+	<Import Project="..\build\Versioning.props" />
+	<Import Project="..\build\Common.props" />
+
+	<PropertyGroup Label="CI/CD Packaging" Condition="'$(IsCI)' == 'true'">
+		<ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+	</PropertyGroup>
+
+</Project>

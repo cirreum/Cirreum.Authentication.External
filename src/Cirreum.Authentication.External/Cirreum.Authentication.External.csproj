@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<AssemblyName>Cirreum.Authentication.External</AssemblyName>
+		<RootNamespace>Cirreum.Authentication</RootNamespace>
+		<Description>BYOID (Bring-Your-Own-IDp) external authentication scheme for the Cirreum framework. Validates JWT bearer tokens from multiple customer Identity Providers (Okta, Auth0, customer Entra tenants) per tenant-identifier resolution (header / path / subdomain). Renamed from Cirreum.Authorization.External as part of the Cirreum 1.0 Foundation Reset. The legacy static ExternalSchemeSelector is refactored to implement the ISchemeSelector contract during the rename.</Description>
+		<PackageTags>cirreum;authentication;external;byoid;jwt;multi-tenant</PackageTags>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<!--
+			Cirreum.AuthenticationProvider transitively pulls Kernel (for Cirreum.Security
+			types like ClaimsHelper).
+		-->
+		<ProjectReference Include="..\..\..\..\Core\Cirreum.AuthenticationProvider\src\Cirreum.AuthenticationProvider\Cirreum.AuthenticationProvider.csproj" />
+
+		<PackageReference Include="Microsoft.Identity.Web" Version="4.9.0" />
+		<PackageReference Include="Cirreum.Providers" Version="1.2.0" />
+
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="Cirreum.Providers" />
+	</ItemGroup>
+
+</Project>

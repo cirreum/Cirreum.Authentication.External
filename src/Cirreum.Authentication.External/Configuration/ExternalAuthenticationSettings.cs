@@ -1,0 +1,6 @@
+namespace Cirreum.Authentication.Configuration;
+
+using Cirreum.AuthenticationProvider.Configuration;
+
+public class ExternalAuthenticationSettings
+	: AuthenticationProviderSettings<ExternalAuthenticationInstanceSettings>;
