@@ -1,6 +1,5 @@
 namespace Cirreum.Authentication.External;
 
-using Cirreum.AuthenticationProvider;
 using Microsoft.AspNetCore.Authentication;
 
 /// <summary>

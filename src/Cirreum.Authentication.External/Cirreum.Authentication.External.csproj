@@ -8,16 +8,17 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+	
+	<ItemGroup>
 		<!--
 			Cirreum.AuthenticationProvider transitively pulls Kernel (for Cirreum.Security
-			types like ClaimsHelper).
+			types like ClaimsHelper), Contracts, Result, and Providers.
 		-->
-		<ProjectReference Include="..\..\..\..\Core\Cirreum.AuthenticationProvider\src\Cirreum.AuthenticationProvider\Cirreum.AuthenticationProvider.csproj" />
+		<PackageReference Include="Cirreum.AuthenticationProvider" Version="1.0.0" />
+		<PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.19.1" />
 
-		<PackageReference Include="Microsoft.Identity.Web" Version="4.9.0" />
-		<PackageReference Include="Cirreum.Providers" Version="1.2.0" />
-
-		<FrameworkReference Include="Microsoft.AspNetCore.App" />
 	</ItemGroup>
 
 	<ItemGroup>
