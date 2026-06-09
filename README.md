@@ -6,8 +6,6 @@
 
 **Multi-tenant external IdP (BYOID) authentication scheme for the Cirreum framework**
 
-> **Migrating from `Cirreum.Authorization.External`?** Renamed successor + selector refactor. See [`docs/MIGRATION-v1.md`](docs/MIGRATION-v1.md).
-
 ## Overview
 
 **Cirreum.Authentication.External** enables a single API to accept JWT bearer tokens from **multiple customer Identity Providers** (Okta, Auth0, customer Entra tenants, etc.) without federating those IdPs into yours. The customer's existing IdP issues tokens; your API validates them per-tenant using the resolved tenant configuration.

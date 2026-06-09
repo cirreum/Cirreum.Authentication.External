@@ -3,7 +3,7 @@
 	<PropertyGroup>
 		<AssemblyName>Cirreum.Authentication.External</AssemblyName>
 		<RootNamespace>Cirreum.Authentication</RootNamespace>
-		<Description>BYOID (Bring-Your-Own-IDp) external authentication scheme for the Cirreum framework. Validates JWT bearer tokens from multiple customer Identity Providers (Okta, Auth0, customer Entra tenants) per tenant-identifier resolution (header / path / subdomain). Renamed from Cirreum.Authorization.External as part of the Cirreum 1.0 Foundation Reset. The legacy static ExternalSchemeSelector is refactored to implement the ISchemeSelector contract during the rename.</Description>
+		<Description>BYOID (Bring-Your-Own-IDp) external authentication scheme for the Cirreum framework. Validates JWT bearer tokens from multiple customer Identity Providers (Okta, Auth0, customer Entra tenants) per tenant-identifier resolution (header / path / subdomain), via an ISchemeSelector that routes to the resolved tenant's issuer.</Description>
 		<PackageTags>cirreum;authentication;external;byoid;jwt;multi-tenant</PackageTags>
 	</PropertyGroup>
 
