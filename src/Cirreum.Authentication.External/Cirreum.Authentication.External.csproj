@@ -16,7 +16,7 @@
 			Cirreum.AuthenticationProvider transitively pulls Kernel (for Cirreum.Security
 			types like ClaimsHelper), Contracts, Result, and Providers.
 		-->
-		<PackageReference Include="Cirreum.AuthenticationProvider" Version="1.1.0" />
+		<PackageReference Include="Cirreum.AuthenticationProvider" Version="1.1.1" />
 		<PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.19.1" />
 
 	</ItemGroup>
