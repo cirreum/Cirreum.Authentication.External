@@ -1,0 +1,12 @@
+<Project>
+
+	<!-- Imports -->
+	<Import Project="..\build\Common.props" />
+
+	<!-- Test Project Overrides -->
+	<PropertyGroup>
+		<IsPackable>false</IsPackable>
+		<GenerateDocumentationFile>false</GenerateDocumentationFile>
+	</PropertyGroup>
+
+</Project>

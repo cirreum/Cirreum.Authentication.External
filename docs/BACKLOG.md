@@ -19,19 +19,16 @@ upgrade, a coordinated multi-repo rollout).
 
 ## Queued
 
-### Test project (none exists) + composition-path coverage for `AddExternalTenantResolver<T>`
+### Deepen test coverage: handler + configuration manager
 
 **SemVer:** Patch
-**Trigger:** Next substantive change to this package (do not ship another feature on an untested package).
-**Noted:** 2026-07-18
+**Trigger:** Next substantive change to the External scheme's validation or resolution flow.
+**Noted:** 2026-07-18 *(shrunk 2026-07-19 — the original item's test project, composition-path
+tests for `AddExternalTenantResolver<T>`, and `TenantIdentifierExtractor` coverage shipped.)*
 
-This repo has **no test project at all** — the `tests/` scaffold exists but contains no tests.
-A 2026-07-18 sweep (prompted by Cirreum.Authentication.ApiKey issue #1, where the untested
-`AddApiKey()` composition verb threw unconditionally through five published versions) statically
-audited `AddExternalTenantResolver<T>` and found **no defect** — the verb is a type-based
-`Services.Replace` plus an optional `Configure`, with no registration shape that can throw at
-composition time. This item is the coverage debt: scaffold the test project from
-`C:\Cirreum\DevOps\templates` (xUnit + FluentAssertions + NSubstitute per house convention) and
-include a composition-path test for the verb (bare-host compose must not throw; the registered
-`IExternalTenantResolver` must resolve to the supplied type, including when a default registration
-is being replaced) alongside first component coverage for the External scheme types.
+The remaining untested surface is the request-path machinery that needs richer harnessing:
+`ExternalAuthenticationHandler` (token validation flow, `TenantNotFoundBehavior` branches,
+`ValidateTenantInPath` defense-in-depth check) and `ExternalConfigurationManager` (JWKS caching /
+`RequireHttpsMetadata` enforcement), plus `ExternalAuthenticationSchemeSelector`. Model the handler
+harness on `SessionTicketAuthenticationHandlerTests` / the ApiKey handler tests (DefaultHttpContext
++ scheme + NullLogger).
