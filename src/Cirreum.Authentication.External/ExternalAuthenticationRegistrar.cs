@@ -85,6 +85,26 @@ public sealed class ExternalAuthenticationRegistrar
 		IConfiguration configuration,
 		AuthenticationBuilder authBuilder) {
 
+		// External serves every tenant through one scheme, resolving each tenant's issuer at
+		// request time via IExternalTenantResolver — per-tenant variance is data, not
+		// configuration instances. A second instance would add no routing capability while
+		// silently competing for the same singleton options and extractor, so fail fast here
+		// rather than let TryAdd keep the first instance's settings and discard the rest.
+		var claimed = services
+			.FirstOrDefault(d => d.ImplementationInstance is ExternalSchemeClaim)?
+			.ImplementationInstance as ExternalSchemeClaim;
+
+		if (claimed is not null) {
+			throw new InvalidOperationException(
+				$"External provider instance '{settings.Scheme}' cannot be registered because instance " +
+				$"'{claimed.Scheme}' already claimed this host's External scheme. External supports a " +
+				$"single instance per host — it resolves every tenant dynamically through " +
+				$"{nameof(IExternalTenantResolver)}, so per-tenant configuration belongs in that resolver " +
+				$"rather than in additional configured instances.");
+		}
+
+		services.AddSingleton(new ExternalSchemeClaim(settings.Scheme));
+
 		// Build ExternalAuthenticationOptions from settings
 		var options = BuildOptionsFromSettings(settings);
 
@@ -100,11 +120,14 @@ public sealed class ExternalAuthenticationRegistrar
 				options.JwksCacheDuration,
 				sp.GetRequiredService<ILogger<ExternalConfigurationManager>>()));
 
-		// Register the authentication handler
-		// Note: The handler will fail gracefully if IExternalTenantResolver is not registered
-		// The resolver is added via AddExternalAuth<TResolver>() extension method
+		// Register the authentication handler under the instance key — the framework contract
+		// is that the instance key IS the scheme name (the base registrar stamps it onto
+		// settings.Scheme), and every downstream per-scheme lookup — the AuthenticatedScheme
+		// stamp, IApplicationUserResolver dispatch, boundary resolution — keys off that name.
+		// Note: The handler will fail gracefully if IExternalTenantResolver is not registered.
+		// The resolver is added via the AddExternalTenantResolver<T>() extension method.
 		authBuilder.AddScheme<ExternalAuthenticationOptions, ExternalAuthenticationHandler>(
-			ExternalDefaults.AuthenticationScheme,
+			settings.Scheme,
 			configureOptions: o => {
 				o.TenantIdentifierSource = options.TenantIdentifierSource;
 				o.TenantHeaderName = options.TenantHeaderName;
@@ -124,7 +147,7 @@ public sealed class ExternalAuthenticationRegistrar
 		// + Bearer token are both present.
 		services.AddSingleton<ISchemeSelector>(sp =>
 			new ExternalAuthenticationSchemeSelector(
-				ExternalDefaults.AuthenticationScheme,
+				settings.Scheme,
 				sp.GetRequiredService<ExternalAuthenticationOptions>()));
 	}
 

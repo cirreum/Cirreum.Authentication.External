@@ -5,8 +5,16 @@ namespace Cirreum.Authentication.External;
 /// </summary>
 public static class ExternalDefaults {
 	/// <summary>
-	/// The default authentication scheme name for BYOID.
+	/// The conventional instance key — and therefore scheme name — for BYOID.
 	/// </summary>
+	/// <remarks>
+	/// The scheme name is the configured instance key
+	/// (<c>Cirreum:Authentication:Providers:External:Instances:{key}</c>), so this constant
+	/// matches the registered scheme only for a host that names its instance accordingly.
+	/// Use it for <c>[Authorize(AuthenticationSchemes = ...)]</c> and for the
+	/// <c>IApplicationUserResolver.Scheme</c> of a host following the convention; a host that
+	/// names its instance differently must use that key instead.
+	/// </remarks>
 	public const string AuthenticationScheme = "Byoid";
 
 	/// <summary>

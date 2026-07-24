@@ -21,16 +21,24 @@ public static class ExternalAuthenticationBuilderExtensions {
 	/// <typeparam name="T">The app's <see cref="IExternalTenantResolver"/> implementation.</typeparam>
 	/// <param name="builder">The Cirreum authentication builder.</param>
 	/// <param name="configure">Optional callback to configure dynamic-resolver options.</param>
+	/// <param name="lifetime">
+	/// The resolver's service lifetime. Defaults to <see cref="ServiceLifetime.Scoped"/>, which
+	/// is what a resolver reading tenant rows from a database needs — a scoped store (a
+	/// <c>DbContext</c>, a unit of work, a repository) cannot be consumed from a singleton.
+	/// Pass <see cref="ServiceLifetime.Singleton"/> for a resolver that holds its own cache and
+	/// takes no scoped dependencies.
+	/// </param>
 	/// <returns>The builder for chaining.</returns>
 	public static IAuthenticationBuilder AddExternalTenantResolver<T>(
 		this IAuthenticationBuilder builder,
-		Action<DynamicExternalTenantOptions>? configure = null)
+		Action<DynamicExternalTenantOptions>? configure = null,
+		ServiceLifetime lifetime = ServiceLifetime.Scoped)
 		where T : class, IExternalTenantResolver {
 
 		ArgumentNullException.ThrowIfNull(builder);
 
 		builder.Services.Replace(
-			ServiceDescriptor.Singleton<IExternalTenantResolver, T>());
+			ServiceDescriptor.Describe(typeof(IExternalTenantResolver), typeof(T), lifetime));
 
 		if (configure is not null) {
 			builder.Services.Configure(configure);
