@@ -229,12 +229,6 @@ public class ExternalAuthenticationHandler(
 		identity.AddClaim(new Claim("tenant_slug", tenantConfig.Slug));
 		identity.AddClaim(new Claim("auth_scheme", schemeName));
 
-		// Use ClaimsHelper for additional normalization
-		var provider = ClaimsHelper.ResolveProvider(identity);
-		if (provider != IdentityProviderType.Unknown) {
-			identity.AddClaim(new Claim("idp_type", provider.ToString()));
-		}
-
 		return new ClaimsPrincipal(identity);
 
 	}

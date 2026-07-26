@@ -8,6 +8,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) â€” [SemVe
 
 ## [Unreleased]
 
+### Removed
+
+- The `idp_type` claim stamped onto the transformed identity. It was derived from
+  `ClaimsHelper.ResolveProvider` — removed in `Cirreum.Kernel` 2.0.0 — and nothing in the framework
+  or in any consuming application ever read it. An emitted-but-unread claim is indistinguishable
+  from a working one until someone tries to use it, so it goes rather than being re-sourced.
+
+  The `auth_scheme` claim stamped alongside it is unaffected. That one is load-bearing: it carries
+  the resolved scheme, is treated as reserved, and is what downstream per-scheme dispatch depends
+  on.
+
 ## [1.1.1] - 2026-07-24
 
 ### Updated
