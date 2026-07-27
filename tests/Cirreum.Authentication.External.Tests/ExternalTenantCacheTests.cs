@@ -22,7 +22,28 @@ public sealed class ExternalTenantCacheTests {
 		string? issuer = "https://idp.acme.example",
 		string? audience = "api://acme",
 		string? rawToken = "token-1") =>
-		new() { TenantSlug = slug, TokenIssuer = issuer, TokenAudience = audience, RawToken = rawToken };
+		new() {
+			TenantSlug = slug,
+			TokenIssuer = issuer,
+			TokenAudiences = audience is null ? [] : [audience],
+			RawToken = rawToken
+		};
+
+	[Fact]
+	public void The_same_audiences_in_a_different_order_are_one_entry() {
+		// The key is composed from the audiences, so an unordered join would give a token presenting
+		// [a, b] and one presenting [b, a] separate entries for the same tenant.
+		var cache = Cache(o => o.TenantCacheDuration = TimeSpan.FromMinutes(5));
+		var forward = new ExternalResolutionContext {
+			TenantSlug = "acme", TokenIssuer = "https://idp.acme.example", TokenAudiences = ["a", "b"]
+		};
+		var reversed = forward with { TokenAudiences = ["b", "a"] };
+
+		cache.Set(forward, Config());
+
+		cache.Get(reversed).Should().NotBeNull();
+		cache.Count.Should().Be(1);
+	}
 
 	private static ExternalTenantConfig Config(string slug = "acme", bool enabled = true) =>
 		new() {

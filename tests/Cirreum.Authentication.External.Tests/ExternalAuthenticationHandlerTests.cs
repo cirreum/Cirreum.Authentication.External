@@ -52,13 +52,32 @@ public sealed class ExternalAuthenticationHandlerTests {
 			throw new InvalidOperationException("Unexpected refresh.");
 	}
 
+	private static readonly SymmetricSecurityKey SigningKey =
+		new(Encoding.UTF8.GetBytes(new string('k', 64)));
+
+	/// <summary>Serves the signing key, so a token can validate end to end.</summary>
+	private sealed class StubConfigurationManager : IExternalConfigurationManager {
+
+		public Task<OpenIdConnectConfiguration> GetConfigurationAsync(
+			string metadataAddress,
+			bool requireHttps,
+			CancellationToken ct = default) {
+
+			var configuration = new OpenIdConnectConfiguration { Issuer = Issuer };
+			configuration.SigningKeys.Add(SigningKey);
+			return Task.FromResult(configuration);
+		}
+
+		public Task RefreshConfigurationAsync(string metadataAddress, CancellationToken ct = default) =>
+			Task.CompletedTask;
+	}
+
 	private static string CreateToken(Dictionary<string, object> claims, string? tokenType = null) {
-		var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(new string('k', 64)));
 		return new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor {
 			Issuer = Issuer,
 			Claims = claims,
 			TokenType = tokenType,
-			SigningCredentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256)
+			SigningCredentials = new SigningCredentials(SigningKey, SecurityAlgorithms.HmacSha256)
 		});
 	}
 
@@ -77,7 +96,8 @@ public sealed class ExternalAuthenticationHandlerTests {
 
 	private static async Task<AuthenticateResult> AuthenticateAsync(
 		ExternalTenantConfig tenantConfig,
-		string token) {
+		string token,
+		IExternalConfigurationManager? configurationManager = null) {
 
 		var options = new ExternalAuthenticationOptions {
 			TenantIdentifierSource = TenantIdentifierSource.Header,
@@ -92,7 +112,7 @@ public sealed class ExternalAuthenticationHandlerTests {
 			NullLoggerFactory.Instance,
 			UrlEncoder.Default,
 			new StubResolver(tenantConfig),
-			new UnreachableConfigurationManager(),
+			configurationManager ?? new UnreachableConfigurationManager(),
 			new TenantIdentifierExtractor(options));
 
 		var context = new DefaultHttpContext();
@@ -219,6 +239,92 @@ public sealed class ExternalAuthenticationHandlerTests {
 
 		result.Succeeded.Should().BeFalse();
 		result.Failure!.Message.Should().Contain("audience");
+	}
+
+	// -------------------------------------------------------------------------
+	// Reserved claims — these run the full validation path
+	// -------------------------------------------------------------------------
+
+	[Fact]
+	public async Task A_token_supplied_tenant_slug_cannot_shadow_the_resolved_one() {
+		// tenant_slug describes which tenant the framework resolved. Appending ours to an identity
+		// that already carries one from the token leaves two, and FindFirst returns the token's
+		// because it was added first — a tenant-spoofing primitive on the multi-tenant boundary.
+		var token = CreateToken(new Dictionary<string, object> {
+			["aud"] = ApiAudience,
+			["sub"] = "user-1",
+			[ExternalClaimTypes.TenantSlug] = "attacker-tenant"
+		});
+
+		var result = await AuthenticateAsync(TenantConfig(), token, new StubConfigurationManager());
+
+		result.Succeeded.Should().BeTrue();
+		result.Principal!.FindAll(ExternalClaimTypes.TenantSlug)
+			.Should().ContainSingle().Which.Value.Should().Be(Slug);
+	}
+
+	[Fact]
+	public async Task A_claim_mapping_cannot_target_a_reserved_claim() {
+		// The mapping target is tenant-controlled data, so it is a second route to the same shadowing.
+		var token = CreateToken(new Dictionary<string, object> {
+			["aud"] = ApiAudience,
+			["sub"] = "user-1",
+			["groups"] = "attacker-tenant"
+		});
+
+		var tenantConfig = TenantConfig() with {
+			ClaimMappings = new Dictionary<string, string> { ["groups"] = ExternalClaimTypes.TenantSlug }
+		};
+
+		var result = await AuthenticateAsync(tenantConfig, token, new StubConfigurationManager());
+
+		result.Succeeded.Should().BeTrue();
+		result.Principal!.FindAll(ExternalClaimTypes.TenantSlug)
+			.Should().ContainSingle().Which.Value.Should().Be(Slug);
+	}
+
+	[Fact]
+	public async Task An_array_valued_audience_validates() {
+		// `aud` may be a string or an array (RFC 7519 §4.1.3). Reading it as a string alone reports a
+		// valid multi-audience token as carrying no audience at all.
+		var token = CreateToken(new Dictionary<string, object> {
+			["aud"] = new[] { "https://other-api.example.com", ApiAudience },
+			["sub"] = "user-1"
+		});
+
+		var result = await AuthenticateAsync(TenantConfig(), token, new StubConfigurationManager());
+
+		result.Succeeded.Should().BeTrue();
+	}
+
+	[Fact]
+	public async Task An_array_valued_relocated_audience_validates() {
+		var token = CreateToken(new Dictionary<string, object> {
+			["token_use"] = "access",
+			["sub"] = "user-1",
+			["aud"] = ApiAudience,
+			["client_id"] = new[] { "https://other-api.example.com", ApiAudience }
+		});
+
+		var result = await AuthenticateAsync(
+			TenantConfig(
+				audienceClaim: "client_id",
+				requiredClaims: new Dictionary<string, string> { ["token_use"] = "access" }),
+			token,
+			new StubConfigurationManager());
+
+		result.Succeeded.Should().BeTrue(result.Failure?.Message ?? "(no failure recorded)");
+	}
+
+	[Fact]
+	public async Task A_blank_required_claim_type_is_a_misconfiguration() {
+		var token = CreateToken(new Dictionary<string, object> { ["aud"] = ApiAudience });
+
+		var result = await AuthenticateAsync(
+			TenantConfig(requiredClaims: new Dictionary<string, string> { ["  "] = "access" }), token);
+
+		result.Succeeded.Should().BeFalse();
+		result.Failure!.Message.Should().Contain("Tenant configuration is invalid");
 	}
 
 	[Fact]

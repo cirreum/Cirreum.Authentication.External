@@ -83,11 +83,32 @@ public record ExternalTenantConfig {
 	/// which is why this is per-tenant data rather than a framework-wide check.
 	/// </para>
 	/// <para>
-	/// Comparison is ordinal and case-sensitive — these are protocol values, not user input. A claim
-	/// that is absent fails, as does a token that cannot be read.
+	/// <strong>Scalar exact match only.</strong> Each entry requires a single string claim equal to
+	/// the given value, compared ordinally and case-sensitively — these are protocol values, not user
+	/// input. There is no support for array-valued claims, membership tests, numeric or boolean
+	/// claims, or wildcards. A claim that is absent fails, as does a token that cannot be read, and a
+	/// blank claim type is rejected as a misconfiguration rather than ignored.
 	/// </para>
 	/// </remarks>
 	public IReadOnlyDictionary<string, string>? RequiredClaims { get; init; }
+
+	/// <summary>
+	/// The signing algorithms accepted for this tenant, or <see langword="null"/> to accept any
+	/// algorithm the tenant's published signing keys support.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// Values are JWA identifiers as they appear in a token header — <c>RS256</c>, <c>ES256</c>,
+	/// <c>PS256</c>. Pinning them stops a token being accepted under an algorithm the tenant never
+	/// intended to use but whose key material happens to appear in their JWKS.
+	/// </para>
+	/// <para>
+	/// Left null by default rather than pinned to a house list, because the correct set is the
+	/// tenant's decision and a framework default would reject a tenant who signs with anything else.
+	/// Pin it where a tenant's algorithm is known and stable.
+	/// </para>
+	/// </remarks>
+	public IReadOnlyList<string>? ValidAlgorithms { get; init; }
 
 	/// <summary>
 	/// Optional: Override the issuer validation.

@@ -22,8 +22,21 @@ configuration reached. Certificate validation now always applies. A development 
 needs a custom handler reconfigures `ExternalDefaults.HttpClientName` in code, scoped to that
 environment.
 
+## Security
+
+**A tenant's token can no longer shadow the claims the framework stamps.** `tenant_slug` and
+`auth_scheme` were appended to an identity that might already carry them — from the token, or from a
+`ClaimMappings` entry targeting them, since the mapping target was unrestricted. Two claims of the
+same type meant `FindFirst` returned the token's, because it was added first. On the multi-tenant
+boundary that is a tenant-spoofing primitive. Both are now reserved and discarded from the incoming
+identity before the resolved values are stamped. Present in every 1.x version.
+
 ## Other breaking changes
 
+- **`ExternalResolutionContext.TokenAudience` is now `TokenAudiences`** (`IReadOnlyList<string>`),
+  because `aud` may be an array. Use `.Contains(...)` where you compared a scalar.
+- **`AllowedClientIds` is matched case-sensitively.** Client IDs are opaque identifiers; folding case
+  could only widen the accepted set. Confirm your tenant records match the case your IdP issues.
 - **`AddExternalTenantResolver<T>()` lost its `configure` callback.** The options type behind it
   shipped with no members and nothing ever read the callback, so no behaviour is lost. Delete the
   argument.
@@ -97,6 +110,12 @@ different pooling.
 
 ## Fixed
 
+- **An array-valued `aud` was read as no audience at all.** `aud` may be a string or an array
+  (RFC 7519 §4.1.3), and reading an array as a string yields a single coerced value rather than
+  failing — so a multi-audience token reached the resolver with a partial audience, and a tenant
+  whose `AudienceClaim` named an array-valued claim had valid tokens rejected.
+- **A malformed token could escape as an unhandled exception.** The pre-read sits ahead of the
+  validation `try`, and `ReadJsonWebToken` can throw on input that `CanReadToken` accepts.
 - **A blank configured audience matched a blank token audience.** `ValidAudiences` is `required`, but
   nothing stopped it holding an empty string — and a token presenting an empty audience then compared
   equal, turning a missing configuration into an acceptance. Blank and whitespace-only entries are

@@ -130,11 +130,13 @@ internal sealed class ExternalTenantCache(ExternalAuthenticationOptions? options
 
 	// The raw token is deliberately absent: it is a credential, and it is unique per request, so
 	// keying on it would both store credentials under themselves and give every request a miss.
+	// Audiences are ordered so that the same set presented in a different order is one entry rather
+	// than two.
 	private static string KeyFor(ExternalResolutionContext context) =>
 		string.Concat(
 			context.TenantSlug?.ToLowerInvariant(), KeySeparator,
 			context.TokenIssuer, KeySeparator,
-			context.TokenAudience);
+			string.Join(KeySeparator, context.TokenAudiences.Order(StringComparer.Ordinal)));
 
 	internal sealed record Entry(
 		ExternalTenantConfig? Config,

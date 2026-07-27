@@ -98,7 +98,29 @@ The caching it reserved space for now exists, as configuration rather than as a 
 sits with the rest of the instance's settings and can differ per environment without a rebuild — see
 *Tenant-resolution caching* below.
 
-### 4. `ExternalConfigurationManager`'s constructor changed
+### 4. `ExternalResolutionContext.TokenAudience` is now `TokenAudiences`
+
+`aud` may be a single string or an array (RFC 7519 §4.1.3), so the hint is a collection:
+
+```csharp
+// Before
+context.TokenAudience == "https://api.example.com"
+
+// Now
+context.TokenAudiences.Contains("https://api.example.com")
+```
+
+Empty when the token carries no audience or could not be read — never null.
+
+### 5. `AllowedClientIds` is matched case-sensitively
+
+Previously `OrdinalIgnoreCase`. A client ID is an opaque identifier and no major IdP documents it as
+case-insensitive, so folding case could only widen the set of accepted callers.
+
+**What to do:** confirm the client IDs in your tenant records match the case your IdP issues. For
+GUID-style IDs (Entra), match the case your IdP emits — conventionally lowercase.
+
+### 6. `ExternalConfigurationManager`'s constructor changed
 
 It now takes an `IHttpClientFactory`:
 
@@ -113,7 +135,20 @@ new ExternalConfigurationManager(refreshInterval, httpClientFactory, logger)
 This only affects code that constructs the type directly. Applications resolving
 `IExternalConfigurationManager` from the container are unaffected — the registrar wires the factory.
 
-### 5. The `idp_type` claim is no longer stamped
+### 7. `tenant_slug` and `auth_scheme` are reserved claim types
+
+The handler stamps both itself, so a claim of either type arriving in a tenant's token — or produced
+by a `ClaimMappings` entry targeting one — is now **discarded** before the resolved value is stamped,
+and the discard is logged as a warning.
+
+Previously they were appended, leaving two claims of the same type on the identity with the token's
+first, which is what `FindFirst` returns.
+
+**What to do:** nothing, unless a tenant's IdP legitimately emits a claim named `tenant_slug` or
+`auth_scheme` that your application reads. Map it to a different name via `ClaimMappings`, and use
+`ExternalClaimTypes.TenantSlug` / `ExternalClaimTypes.AuthScheme` when reading the framework's own.
+
+### 8. The `idp_type` claim is no longer stamped
 
 It was derived from `ClaimsHelper.ResolveProvider`, removed in `Cirreum.Kernel` 2.0.0.
 

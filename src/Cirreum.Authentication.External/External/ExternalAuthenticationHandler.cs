@@ -1,8 +1,5 @@
 namespace Cirreum.Authentication.External;
 
-using Cirreum;
-using Cirreum.Security;
-
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -27,7 +24,18 @@ public class ExternalAuthenticationHandler(
 
 	private readonly JsonWebTokenHandler _tokenHandler = new JsonWebTokenHandler();
 
+	private static readonly HashSet<string> ExternalReservedClaimTypes =
+		new(StringComparer.Ordinal) { ExternalClaimTypes.TenantSlug, ExternalClaimTypes.AuthScheme };
+
+	// Whether a credential was actually presented, as opposed to the request simply not carrying one.
+	// RFC 6750 §3.1 scopes error="invalid_token" to a supplied-but-rejected credential; a bare
+	// challenge is the correct response to a request that presented nothing.
+	private bool _credentialPresented;
+
 	protected override async Task<AuthenticateResult> HandleAuthenticateAsync() {
+		// Reset per-invocation state (the handler instance may be reused within a request).
+		this._credentialPresented = false;
+
 		// 1. Extract tenant identifier
 		var tenantSlug = tenantExtractor.Extract(this.Context);
 		if (string.IsNullOrEmpty(tenantSlug)) {
@@ -46,6 +54,10 @@ public class ExternalAuthenticationHandler(
 			return this.FailWithMessage("Empty bearer token");
 		}
 
+		// A credential for this scheme was presented — everything from here fails with
+		// error="invalid_token" rather than a bare challenge.
+		this._credentialPresented = true;
+
 		// 3. Validate tenant in path if configured (defense in depth)
 		if (this.Options.ValidateTenantInPath) {
 			var pathTenant = tenantExtractor.ExtractFromPath(this.Context, this.Options.ValidationPathSegmentIndex);
@@ -57,41 +69,53 @@ public class ExternalAuthenticationHandler(
 			}
 		}
 
-		// 4. Pre-read token to get issuer/audience for resolution context and early validation
+		// 4. Pre-read the token for routing hints and early rejection. Every value read here is
+		// UNVERIFIED — the signature is not checked until step 10 — so these may be used to reject
+		// and to select a stored configuration, never to establish trust.
 		JsonWebToken? parsedToken = null;
 		string? tokenIssuer = null;
-		string? tokenAudience = null;
+		IReadOnlyList<string> tokenAudiences = [];
 		string? tokenType = null;
 		string? tokenClientId = null;
 
-		if (this._tokenHandler.CanReadToken(token)) {
-			parsedToken = this._tokenHandler.ReadJsonWebToken(token);
+		// CanReadToken is a shallow structural check; ReadJsonWebToken still parses JSON and can
+		// throw on input that passes it. This runs before the validation try/catch below, so an
+		// unguarded throw here escapes as a 500 instead of failing authentication. A token that
+		// cannot be read leaves every hint null, and each check below fails closed on that.
+		try {
+			if (this._tokenHandler.CanReadToken(token)) {
+				parsedToken = this._tokenHandler.ReadJsonWebToken(token);
+			}
+		} catch (Exception ex) {
+			if (this.Logger.IsEnabled(LogLevel.Debug)) {
+				this.Logger.LogDebug(ex, "Presented token could not be parsed for tenant {TenantSlug}", tenantSlug);
+			}
+			parsedToken = null;
+		}
+
+		if (parsedToken is not null) {
 			tokenIssuer = parsedToken.Issuer;
-			// TryGetPayloadValue, not GetPayloadValue: the latter throws when the claim is absent,
-			// which turns a token carrying no `aud` — legal, and what AWS Cognito issues — into an
-			// unhandled exception and a 500 rather than a failed authentication.
-			tokenAudience = parsedToken.TryGetPayloadValue<string>(
-				ExternalDefaults.DefaultAudienceClaim, out var audienceValue) ? audienceValue : null;
+			tokenAudiences = ReadClaimValues(parsedToken, ExternalDefaults.DefaultAudienceClaim);
 			tokenType = parsedToken.Typ;
 			// Try azp first (OAuth 2.0), then client_id (some IdPs use this)
 			tokenClientId = parsedToken.TryGetPayloadValue<string>("azp", out var azp) ? azp : null;
 			tokenClientId ??= parsedToken.TryGetPayloadValue<string>("client_id", out var cid) ? cid : null;
 		}
 
-		// An ID token presented as an access token is rejected by audience validation below, not by
-		// inspecting what the token says about itself. Nothing in OpenID Connect marks an ID token
-		// as one — there is no standard `typ` value for it — so any header or claim check would be
-		// vendor-specific and silent where the vendor does not participate. Audience validation
-		// holds everywhere instead: a tenant's ValidAudiences name this API, an ID token's `aud`
-		// names the client that requested sign-in, and validation is mandatory and fails closed.
-		// A tenant whose IdP does not fit that model moves the check via AudienceClaim, and then
-		// owes a discriminator through RequiredClaims — see step 7c.
+		// Nothing in OpenID Connect marks a token as an ID token — there is no standard `typ` value
+		// for one — so the handler does not try to read the answer off the token. What separates an
+		// access token from an ID token is the audience, PROVIDED the tenant's API audience is
+		// distinct from the client ID that requested sign-in. That is the usual arrangement but not a
+		// guarantee: an IdP that issues access tokens audienced to the client itself (Entra v1 can)
+		// produces both kinds carrying the same `aud`, and audience validation cannot tell them
+		// apart. Where a provider exposes a discriminator — RFC 9068 `typ: at+jwt`, or a claim of its
+		// own — RequiredClaims and RequireAccessTokenType are how a tenant declares it.
 
 		// 5. Resolve tenant configuration
 		var resolutionContext = new ExternalResolutionContext {
 			TenantSlug = tenantSlug,
 			TokenIssuer = tokenIssuer,
-			TokenAudience = tokenAudience,
+			TokenAudiences = tokenAudiences,
 			RawToken = token
 		};
 
@@ -173,6 +197,15 @@ public class ExternalAuthenticationHandler(
 			}
 
 			foreach (var (claimType, requiredValue) in tenantConfig.RequiredClaims) {
+				if (!claimType.HasValue()) {
+					this.Logger.LogError(
+						"Tenant {TenantSlug} has a RequiredClaims entry with a blank claim type. A requirement " +
+						"naming no claim cannot be checked, so it is treated as a misconfiguration rather than " +
+						"silently skipped.",
+						tenantSlug);
+					return this.FailWithMessage("Tenant configuration is invalid");
+				}
+
 				var actual = parsedToken.TryGetPayloadValue<string>(claimType, out var value) ? value : null;
 				if (!string.Equals(actual, requiredValue, StringComparison.Ordinal)) {
 					this.Logger.LogWarning(
@@ -187,17 +220,16 @@ public class ExternalAuthenticationHandler(
 		// TokenValidationParameters can only validate `aud`, so standard validation is switched off
 		// below and the equivalent check happens here against the same ValidAudiences.
 		if (!usesStandardAudience) {
-			var actualAudience = parsedToken is not null
-				&& parsedToken.TryGetPayloadValue<string>(tenantConfig.AudienceClaim, out var aud)
-					? aud
-					: null;
+			var presented = parsedToken is not null
+				? ReadClaimValues(parsedToken, tenantConfig.AudienceClaim)
+				: [];
 
-			if (!actualAudience.HasValue()
-				|| !validAudiences.Contains(actualAudience, StringComparer.Ordinal)) {
-
+			if (!presented.Any(value => value.HasValue() && validAudiences.Contains(value, StringComparer.Ordinal))) {
 				this.Logger.LogWarning(
 					"Audience validation failed for tenant {TenantSlug}: claim '{AudienceClaim}' was '{Actual}'",
-					tenantSlug, tenantConfig.AudienceClaim, actualAudience ?? "(absent)");
+					tenantSlug,
+					tenantConfig.AudienceClaim,
+					presented.Length == 0 ? "(absent)" : string.Join(", ", presented));
 				return this.FailWithMessage("Token audience is not valid for this tenant");
 			}
 		}
@@ -211,7 +243,9 @@ public class ExternalAuthenticationHandler(
 				return this.FailWithMessage("Token missing client identifier (azp/client_id)");
 			}
 
-			if (!tenantConfig.AllowedClientIds.Contains(tokenClientId, StringComparer.OrdinalIgnoreCase)) {
+			// Ordinal: a client ID is an opaque identifier, and no major IdP documents it as
+			// case-insensitive. Folding case can only widen the set of accepted callers.
+			if (!tenantConfig.AllowedClientIds.Contains(tokenClientId, StringComparer.Ordinal)) {
 				this.Logger.LogWarning(
 					"Client ID validation failed for tenant {TenantSlug}: '{ClientId}' not in allowed list",
 					tenantSlug, tokenClientId);
@@ -241,6 +275,9 @@ public class ExternalAuthenticationHandler(
 			// already checked against these same audiences. It is never simply skipped.
 			ValidateAudience = usesStandardAudience,
 			ValidAudiences = validAudiences,
+			// Null accepts whatever the tenant's published keys support; a tenant that pins its
+			// algorithms stops a token being accepted under one they never meant to use.
+			ValidAlgorithms = tenantConfig.ValidAlgorithms,
 			ValidateLifetime = true,
 			ValidateIssuerSigningKey = true,
 			IssuerSigningKeys = oidcConfig.SigningKeys,
@@ -264,7 +301,7 @@ public class ExternalAuthenticationHandler(
 		}
 
 		// 11. Build claims principal with normalized claims
-		var principal = BuildClaimsPrincipal(validationResult.ClaimsIdentity, tenantConfig, this.Scheme.Name);
+		var principal = this.BuildClaimsPrincipal(validationResult.ClaimsIdentity, tenantConfig, this.Scheme.Name);
 
 		// 12. Store tenant context for downstream use
 		this.Context.Items["External:TenantSlug"] = tenantSlug;
@@ -287,34 +324,76 @@ public class ExternalAuthenticationHandler(
 		return AuthenticateResult.Fail(displayMessage);
 	}
 
-	private static ClaimsPrincipal BuildClaimsPrincipal(
+	// A JWT claim may hold a single value or an array — `aud` most visibly (RFC 7519 §4.1.3), but any
+	// claim a tenant nominates can be either. TryGetPayloadValue<string> returns false for an array,
+	// which would read a valid multi-audience token as carrying no audience at all.
+	private static string[] ReadClaimValues(JsonWebToken token, string claimType) {
+		// Array first: reading an array-valued claim as a string does not fail cleanly — it yields a
+		// single coerced value — so a string-first order would silently see only part of the claim
+		// and never reach this branch. Reading a scalar as an array does fail cleanly, so the
+		// fallback below is the safe direction.
+		if (token.TryGetPayloadValue<string[]>(claimType, out var many)) {
+			return many is null ? [] : many;
+		}
+
+		if (token.TryGetPayloadValue<string>(claimType, out var single)) {
+			return single is null ? [] : [single];
+		}
+
+		return [];
+	}
+
+	private ClaimsPrincipal BuildClaimsPrincipal(
 		ClaimsIdentity identity,
 		ExternalTenantConfig tenantConfig,
 		string schemeName) {
 
-		// Apply custom claim mappings if configured
-		if (tenantConfig.ClaimMappings is { Count: > 0 }) {
-			var mappedClaims = new List<Claim>();
-			foreach (var claim in identity.Claims) {
-				if (tenantConfig.ClaimMappings.TryGetValue(claim.Type, out var mappedType)) {
-					mappedClaims.Add(new Claim(mappedType, claim.Value, claim.ValueType, claim.Issuer));
-				} else {
-					mappedClaims.Add(claim);
-				}
+		// The identity is rebuilt rather than appended to, because the claims the handler stamps are
+		// reserved. A tenant's token carrying `tenant_slug`, or a ClaimMappings entry targeting it,
+		// would otherwise leave two claims of that type on the identity — and FindFirst returns the
+		// token's, because it was added first. On a multi-tenant boundary that is a tenant-spoofing
+		// primitive, not a cosmetic duplicate.
+		var claims = new List<Claim>(identity.Claims.Count() + 2);
+		var hasMappings = tenantConfig.ClaimMappings is { Count: > 0 };
+
+		foreach (var claim in identity.Claims) {
+			var claimType = hasMappings
+				&& tenantConfig.ClaimMappings!.TryGetValue(claim.Type, out var mappedType)
+					? mappedType
+					: claim.Type;
+
+			if (ExternalReservedClaimTypes.Contains(claimType)) {
+				this.Logger.LogWarning(
+					"Discarded a reserved claim '{ClaimType}' arriving from tenant {TenantSlug}'s token. " +
+					"The framework stamps this claim itself; a token or claim mapping supplying it cannot " +
+					"be allowed to shadow the resolved value.",
+					claimType, tenantConfig.Slug);
+				continue;
 			}
-			identity = new ClaimsIdentity(mappedClaims, identity.AuthenticationType, identity.NameClaimType, identity.RoleClaimType);
+
+			claims.Add(string.Equals(claimType, claim.Type, StringComparison.Ordinal)
+				? claim
+				: new Claim(claimType, claim.Value, claim.ValueType, claim.Issuer));
 		}
 
-		// Add tenant context claims
-		identity.AddClaim(new Claim("tenant_slug", tenantConfig.Slug));
-		identity.AddClaim(new Claim("auth_scheme", schemeName));
+		claims.Add(new Claim(ExternalClaimTypes.TenantSlug, tenantConfig.Slug));
+		claims.Add(new Claim(ExternalClaimTypes.AuthScheme, schemeName));
 
-		return new ClaimsPrincipal(identity);
+		return new ClaimsPrincipal(new ClaimsIdentity(
+			claims, identity.AuthenticationType, identity.NameClaimType, identity.RoleClaimType));
 
 	}
 
 	protected override Task HandleChallengeAsync(AuthenticationProperties properties) {
 		this.Response.StatusCode = 401;
+
+		// A request that presented no credential gets a bare challenge — error="invalid_token" would
+		// assert a token was supplied and rejected, which tells a client to stop retrying with a
+		// credential it never sent.
+		if (!this._credentialPresented) {
+			this.Response.Headers.WWWAuthenticate = $"Bearer realm=\"{this.Scheme.Name}\"";
+			return Task.CompletedTask;
+		}
 
 		// RFC 6750 Section 3.1: Include error code in WWW-Authenticate header
 		// "invalid_token" is the appropriate error for JWT validation failures

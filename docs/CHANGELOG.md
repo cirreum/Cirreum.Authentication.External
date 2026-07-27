@@ -32,6 +32,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) — [SemVer](ht
   without supplying a claim that distinguishes them is **rejected at resolution time**. Both are
   plain data on the tenant record, so a tenant of this shape is a database row rather than a code
   path, and no vendor is named anywhere in the framework.
+- **`ExternalClaimTypes`**, naming the two claims the handler stamps and reserves — `tenant_slug` and
+  `auth_scheme`.
+- **`ExternalTenantConfig.ValidAlgorithms`**, pinning the signing algorithms accepted for a tenant.
+  Null by default, which accepts whatever that tenant's published keys support; the correct set is
+  the tenant's decision and a framework-wide default would reject anyone signing with something else.
 - **`ExternalDefaults.HttpClientName`** — the named `IHttpClientFactory` client used for tenant IdP
   metadata and signing keys, so an application can supply a proxy, pinned certificate, or different
   pooling without the package growing a setting for each. Registered with
@@ -45,6 +50,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) — [SemVer](ht
 - **`ExternalConfigurationManager` takes an `IHttpClientFactory`.** It previously constructed a bare
   `HttpClient` per metadata address and held it for the lifetime of the process, with no timeout and
   no seam for an application to shape the handler.
+- **`ExternalResolutionContext.TokenAudience` is now `TokenAudiences`**, an `IReadOnlyList<string>`,
+  because `aud` may be an array. A resolver reading the old scalar takes the first entry or checks
+  `Contains`.
+- **`AllowedClientIds` is matched case-sensitively.** A client ID is an opaque identifier and no
+  major IdP documents it as case-insensitive, so folding case could only widen the set of accepted
+  callers.
+- **A request presenting no credential now receives a bare `WWW-Authenticate: Bearer` challenge**
+  rather than one carrying `error="invalid_token"`. RFC 6750 §3.1 scopes that error to a credential
+  that was supplied and rejected; announcing it unconditionally tells a client its token failed when
+  it never sent one.
 - **`ExternalAuthenticationOptions` is now a single instance.** The registrar built one object for
   the extractor, scheme selector and tenant cache, while `AddScheme` configured a second for the
   handler, kept in step by a hand-written property-by-property copy. Consumers resolving the bare
@@ -73,6 +88,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) — [SemVer](ht
 
 ### Fixed
 
+- **An array-valued `aud` was read as no audience at all.** `aud` may be a single string or an array
+  (RFC 7519 §4.1.3). The pre-read asked for a string, which for an array yields a single coerced
+  value rather than failing — so a multi-audience token reached the resolver and the cache key with
+  a partial audience, and a tenant whose `AudienceClaim` named an array-valued claim had valid
+  tokens rejected. Claims are now read array-first, with a scalar fallback.
+- **A malformed token could escape as an unhandled exception.** `CanReadToken` is a shallow
+  structural check; `ReadJsonWebToken` still parses JSON and can throw on input that passes it, and
+  the pre-read sits ahead of the validation `try`. It is now guarded, and a token that cannot be
+  read fails authentication rather than the request.
 - **A blank configured audience matched a blank token audience.** `ValidAudiences` is `required`, but
   nothing stopped it holding an empty string, and a token presenting an empty audience then compared
   equal — a missing configuration becoming an acceptance rather than a rejection. Blank and
@@ -95,6 +119,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) — [SemVer](ht
 
 ### Security
 
+- **A tenant's token can no longer shadow the claims the framework stamps.** `tenant_slug` and
+  `auth_scheme` were appended to an identity that might already carry them — from the token itself,
+  or from a `ClaimMappings` entry targeting them, since the mapping target was unrestricted. That
+  left two claims of the same type, and `FindFirst` returns the token's because it was added first:
+  a tenant-spoofing primitive on the multi-tenant boundary. Both are now reserved via
+  `ExternalClaimTypes`, discarded from the incoming identity before the resolved values are stamped,
+  and the discard is logged.
 - **`RequireHttpsMetadata` now enforces HTTPS, and no longer disables certificate validation.** It
   was never passed to the configuration manager, so an `http://` metadata address was fetched
   regardless of the setting. What the flag actually controlled was whether TLS certificate
