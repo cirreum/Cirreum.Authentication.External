@@ -1,11 +1,11 @@
 namespace Cirreum.Authentication.Configuration;
 
-using Cirreum.AuthenticationProvider.Configuration;
 using Cirreum.Authentication.External;
+using Cirreum.AuthenticationProvider.Configuration;
 
 /// <summary>
 /// Settings for a single External (BYOID) provider instance.
-/// Maps to: Cirreum:Authorization:Providers:External:Instances:{name}
+/// Maps to: Cirreum:Authentication:Providers:External:Instances:{name}
 /// </summary>
 /// <remarks>
 /// <para>
@@ -86,5 +86,16 @@ public class ExternalAuthenticationInstanceSettings
 	/// Default: false
 	/// </summary>
 	public bool DetailedErrors { get; set; }
+
+	/// <summary>
+	/// Caching for <see cref="IExternalTenantResolver"/> results. Off unless
+	/// <see cref="TenantResolverCacheSettings.DurationSeconds"/> is set.
+	/// </summary>
+	/// <remarks>
+	/// Grouped rather than flattened because it is three related knobs, not one: they configure a
+	/// single feature and are only meaningful together. <see cref="JwksCacheDurationMinutes"/> stays
+	/// flat for the opposite reason — one value has nothing to group with.
+	/// </remarks>
+	public TenantResolverCacheSettings TenantResolverCache { get; set; } = new();
 
 }

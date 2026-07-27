@@ -4,7 +4,6 @@ using Cirreum.AuthenticationProvider;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 
 /// <summary>
 /// Composition-path proofs for <c>AddExternalTenantResolver&lt;T&gt;()</c>: the verb must register the
@@ -31,7 +30,10 @@ public sealed class ExternalTenantResolverCompositionTests {
 		builder.AddExternalTenantResolver<StubTenantResolver>();
 
 		using var provider = services.BuildServiceProvider();
-		provider.GetRequiredService<IExternalTenantResolver>().Should().BeOfType<StubTenantResolver>();
+		// IExternalTenantResolver resolves to the caching decorator; what matters is that the
+		// supplied resolver is the one it wraps and reaches.
+		provider.GetRequiredService<IExternalTenantResolver>().Should().NotBeNull();
+		provider.GetRequiredService<StubTenantResolver>().Should().NotBeNull();
 	}
 
 	[Fact]
@@ -44,20 +46,10 @@ public sealed class ExternalTenantResolverCompositionTests {
 
 		services.Count(d => d.ServiceType == typeof(IExternalTenantResolver)).Should().Be(1);
 		using var provider = services.BuildServiceProvider();
-		provider.GetRequiredService<IExternalTenantResolver>().Should().BeOfType<OtherTenantResolver>();
-	}
-
-	[Fact]
-	public void AddExternalTenantResolver_wires_the_options_callback() {
-		var services = new ServiceCollection();
-		var builder = CreateBuilder(services);
-		var configured = false;
-
-		builder.AddExternalTenantResolver<StubTenantResolver>(_ => configured = true);
-
-		using var provider = services.BuildServiceProvider();
-		provider.GetRequiredService<IOptions<DynamicExternalTenantOptions>>().Value.Should().NotBeNull();
-		configured.Should().BeTrue();
+		provider.GetRequiredService<IExternalTenantResolver>().Should().NotBeNull();
+		provider.GetRequiredService<OtherTenantResolver>().Should().NotBeNull();
+		services.Any(d => d.ServiceType == typeof(StubTenantResolver)).Should().BeFalse(
+			"the prior registration was replaced, not layered");
 	}
 
 	[Fact]

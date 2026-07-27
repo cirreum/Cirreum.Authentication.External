@@ -8,6 +8,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) â€” [SemVe
 
 ## [Unreleased]
 
+### Added
+
+- **Tenant-resolution caching.** `IExternalTenantResolver` previously ran on every authenticated
+  request, so a resolver reading tenant rows from a database made a round trip per request while
+  JWKS and IdP metadata were already cached. Configured under `TenantResolverCache`
+  (`DurationSeconds`, `NotFoundDurationSeconds`, `MaxEntries`) and **off unless `DurationSeconds`
+  is set** — caching widens the window in which a tenant disabled at the source still
+  authenticates, which is a trade an operator opts into rather than inherits.
+- **`ExternalTenantConfigurationChanged`**, an authentication event an application publishes when
+  a tenant's configuration changes. The framework invalidates that tenant's cache entry on every
+  replica; there is no cache interface to implement, mirroring how `CredentialRevoked` reaches the
+  denylist. Cross-replica delivery needs no extra wiring where coordination broadcast is already
+  configured.
+- **`ExternalDefaults.HttpClientName`** — the named `IHttpClientFactory` client used for tenant IdP
+  metadata and signing keys, so an application can supply a proxy, pinned certificate, or different
+  pooling without the package growing a setting for each. Registered with
+  `ExternalDefaults.DefaultMetadataTimeout` (10 seconds).
+
+### Changed
+
+- **`AddExternalTenantResolver<T>()` no longer takes a `configure` callback.** The options type it
+  configured shipped empty and nothing ever read the callback. Tenant-resolution settings are
+  configuration, and now live in `appsettings.json` with the rest of the instance's settings.
+- **`ExternalConfigurationManager` takes an `IHttpClientFactory`.** It previously constructed a bare
+  `HttpClient` per metadata address and held it for the lifetime of the process, with no timeout and
+  no seam for an application to shape the handler.
+- **`ExternalAuthenticationOptions` is now a single instance.** The registrar built one object for
+  the extractor, scheme selector and tenant cache, while `AddScheme` configured a second for the
+  handler, kept in step by a hand-written property-by-property copy. Consumers resolving the bare
+  type now receive the same instance the handler reads, post-configuration included.
+
 ### Removed
 
 - The `idp_type` claim stamped onto the transformed identity. It was derived from
@@ -18,6 +49,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) â€” [SemVe
   The `auth_scheme` claim stamped alongside it is unaffected. That one is load-bearing: it carries
   the resolved scheme, is treated as reserved, and is what downstream per-scheme dispatch depends
   on.
+- **`DynamicExternalTenantOptions`**, the empty options type behind the removed `configure`
+  callback.
+- **Two token pre-checks that inspected what a token said about itself.** A missing `typ` header no
+  longer rejects the token: `typ` is optional under RFC 7519 and omitting it is legal, so requiring
+  it turned away valid tokens from IdPs the operator does not control. The `typ == "id_token"`
+  check is also gone — no IdP emits that value, so it never fired, and OpenID Connect defines no
+  standard marker for an ID token. Audience validation is what rejects an ID token presented as an
+  access token, on every IdP: a tenant's `ValidAudiences` name this API while an ID token's `aud`
+  names the client that requested sign-in. `RequireAccessTokenType` still enforces RFC 9068
+  `at+jwt` for tenants whose IdP emits it.
+
+### Fixed
+
+- **Tenant-cache settings never reached the handler's options.** The hand-written copy between the
+  two options instances had fallen three properties behind. Nothing failed, because the only reader
+  of those three held the other instance — the class of defect the single-instance change above
+  removes.
+- `DetailedErrors` lost its documentation when properties were inserted between its doc comment and
+  its declaration.
+- `ExternalAuthenticationInstanceSettings` documented its configuration section as
+  `Cirreum:Authorization:...`, the pre-1.0 path. The correct section is
+  `Cirreum:Authentication:Providers:External:Instances:{name}`.
+
+### Security
+
+- **`RequireHttpsMetadata` now enforces HTTPS, and no longer disables certificate validation.** It
+  was never passed to the configuration manager, so an `http://` metadata address was fetched
+  regardless of the setting. What the flag actually controlled was whether TLS certificate
+  validation was turned off — so setting it `false` for a local IdP silently accepted any
+  certificate in whatever environment that configuration reached. Enforcement now happens at fetch
+  time, and certificate validation is no longer configurable: an application that needs a custom
+  handler for local development reconfigures `ExternalDefaults.HttpClientName`, which is a
+  code-level opt-in rather than a JSON flag that travels to production.
+- **Metadata retrieval is bounded by a 10-second timeout.** `HttpClient` defaults to 100 seconds,
+  long enough that a tenant IdP which stops responding holds the authenticating request open
+  instead of failing it.
 
 ## [1.1.1] - 2026-07-24
 

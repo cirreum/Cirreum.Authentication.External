@@ -51,7 +51,10 @@ dotnet add package Cirreum.Authentication.External
               "RequireHttpsMetadata": true,
               "TenantNotFoundBehavior": "Reject",
               "ClockSkewSeconds": 30,
-              "DetailedErrors": false
+              "DetailedErrors": false,
+              "TenantResolverCache": {
+                "DurationSeconds": 0
+              }
             }
           }
         }
@@ -75,6 +78,42 @@ The resolver is registered **scoped** by default, so it can consume a scoped sto
 ```csharp
 auth.AddExternalTenantResolver<MyCachingResolver>(lifetime: ServiceLifetime.Singleton);
 ```
+
+### Caching tenant resolution
+
+Your resolver runs on **every authenticated request**. For a resolver reading tenant rows from a database, that is a round trip per request — JWKS and IdP metadata are already cached, but tenant resolution was not.
+
+Caching is **off by default** (`DurationSeconds: 0`), because it widens the window in which a tenant you disabled at the source still authenticates. Enable it by setting a duration:
+
+```json
+"TenantResolverCache": {
+  "DurationSeconds": 300,
+  "NotFoundDurationSeconds": 30,
+  "MaxEntries": 1000
+}
+```
+
+`NotFoundDurationSeconds` caches the *absence* of a tenant, so an unknown slug cannot be used to generate database load. It is deliberately short so a newly created tenant becomes reachable quickly. `MaxEntries` bounds the cache; entries are keyed on the tenant slug together with the token's issuer and audience, never on the token itself.
+
+Rather than waiting out the duration, close the staleness window by publishing an event wherever your application changes a tenant's configuration — disabling it, rotating its IdP, changing its audience:
+
+```csharp
+await publisher.PublishAsync(
+    new ExternalTenantConfigurationChanged(tenantSlug, DateTimeOffset.UtcNow));
+```
+
+The framework invalidates that tenant's cache entry on **every replica**, provided coordination broadcast is configured. There is no cache interface to implement and nothing to register — publishing the event is the whole integration.
+
+### Reshaping the metadata HTTP client
+
+Metadata and signing-key retrieval uses a named client registered with a 10-second timeout. To supply a proxy, a pinned certificate, or different pooling:
+
+```csharp
+builder.Services.AddHttpClient(ExternalDefaults.HttpClientName)
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { /* ... */ });
+```
+
+This affects outbound metadata retrieval only. Token validation is local and unaffected.
 
 ## Implementing the tenant resolver
 
@@ -117,12 +156,14 @@ The legacy static `ExternalSchemeSelector` helper class is retired. Detection lo
 
 ## Security considerations
 
-- **Tenant configuration trust** — your `IExternalTenantResolver` must return only verified, currently-active tenant configurations. Cache invalidation on tenant deactivation is your responsibility.
-- **HTTPS enforcement** — `RequireHttpsMetadata: true` (default) blocks JWKS fetches over plain HTTP.
+- **Audience is the boundary** — `ValidAudiences` on the resolved tenant config must name **your API**, never a client ID. An access token's audience is the API it was issued for; an ID token's audience is the client that requested sign-in. This is what stops an ID token being replayed against your API as a bearer token, and it holds on every IdP — OpenID Connect defines no standard marker identifying a token as an ID token, so nothing else can. Audience validation is mandatory and fails closed: a tenant config with no valid audiences rejects every token rather than skipping the check.
+- **Tenant configuration trust** — your `IExternalTenantResolver` must return only verified, currently-active tenant configurations. When resolution caching is enabled, publish `ExternalTenantConfigurationChanged` on deactivation rather than waiting out `DurationSeconds`.
+- **HTTPS enforcement** — `RequireHttpsMetadata: true` (default) rejects a non-HTTPS metadata address at fetch time. It does **not** control certificate validation, which always applies; use the named HTTP client above if a development environment needs a custom handler.
 - **Clock skew** — `ClockSkewSeconds: 30` is a reasonable default; tighten for high-trust tenants.
 - **TenantNotFoundBehavior** — `Reject` is the safe default; `Fallback` is only appropriate when your fallback is your own IdP under your control.
-- **Token type** — tokens with no `typ` header are rejected, and an `id_token` is never accepted as an access token. Set `RequireAccessTokenType` on the resolved tenant config to additionally require `at+jwt`.
+- **Token type** — set `RequireAccessTokenType` on the resolved tenant config to require RFC 9068 `at+jwt`. Opt-in per tenant, because most IdPs — Entra, Cognito, Auth0 — emit plain `JWT` for access tokens by default, so requiring it of a tenant whose IdP does not stamp it rejects every one of their tokens.
 - **Authorized party** — populate `AllowedClientIds` on the resolved tenant config to restrict which of a tenant's client applications may call your API (matched against `azp`, then `client_id`).
+- **Outbound traffic** — token validation is entirely local. The only request made to a tenant's IdP is metadata retrieval, coalesced across concurrent callers and floored at one attempt per five minutes, so a caller presenting invalid tokens cannot generate load on a customer's identity provider through your API.
 
 ## License
 

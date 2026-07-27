@@ -16,13 +16,17 @@
 			Cirreum.AuthenticationProvider transitively pulls Kernel (for Cirreum.Security
 			types like ClaimsHelper), Contracts, Result, and Providers.
 		-->
-		<PackageReference Include="Cirreum.AuthenticationProvider" Version="1.4.2" />
+		<PackageReference Include="Cirreum.AuthenticationProvider" Version="2.0.0" />
 		<PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.21.0" />
 
 	</ItemGroup>
 
 	<ItemGroup>
 		<Using Include="Cirreum.Providers" />
+	</ItemGroup>
+
+	<ItemGroup Label="InternalsVisibleTo" Condition="'$(IsLocalBuild)' == 'true'">
+		<InternalsVisibleTo Include="Cirreum.Authentication.External.Tests" />
 	</ItemGroup>
 
 </Project>

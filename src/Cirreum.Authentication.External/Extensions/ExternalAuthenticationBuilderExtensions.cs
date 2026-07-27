@@ -1,5 +1,6 @@
 namespace Cirreum.Authentication;
 
+using Cirreum.Authentication.Events;
 using Cirreum.Authentication.External;
 using Cirreum.AuthenticationProvider;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,7 +21,6 @@ public static class ExternalAuthenticationBuilderExtensions {
 	/// </summary>
 	/// <typeparam name="T">The app's <see cref="IExternalTenantResolver"/> implementation.</typeparam>
 	/// <param name="builder">The Cirreum authentication builder.</param>
-	/// <param name="configure">Optional callback to configure dynamic-resolver options.</param>
 	/// <param name="lifetime">
 	/// The resolver's service lifetime. Defaults to <see cref="ServiceLifetime.Scoped"/>, which
 	/// is what a resolver reading tenant rows from a database needs — a scoped store (a
@@ -31,28 +31,40 @@ public static class ExternalAuthenticationBuilderExtensions {
 	/// <returns>The builder for chaining.</returns>
 	public static IAuthenticationBuilder AddExternalTenantResolver<T>(
 		this IAuthenticationBuilder builder,
-		Action<DynamicExternalTenantOptions>? configure = null,
 		ServiceLifetime lifetime = ServiceLifetime.Scoped)
 		where T : class, IExternalTenantResolver {
 
 		ArgumentNullException.ThrowIfNull(builder);
 
-		builder.Services.Replace(
-			ServiceDescriptor.Describe(typeof(IExternalTenantResolver), typeof(T), lifetime));
+		// Process-wide, so a singleton regardless of the resolver's lifetime — which is exactly why
+		// the decorator below takes it as a dependency rather than owning one.
+		// Resolved lazily so registration order does not matter: ExternalAuthenticationOptions is
+		// registered by AddExternal(...), which may run before or after this verb. GetService rather
+		// than GetRequiredService because a tenant resolver registered without the External scheme
+		// is a composition with no caching, not a failure.
+		builder.Services.TryAddSingleton(sp =>
+			new ExternalTenantCache(sp.GetService<ExternalAuthenticationOptions>()));
 
-		if (configure is not null) {
-			builder.Services.Configure(configure);
-		}
+		// Registered unconditionally. Whether caching is on is a runtime question the cache answers,
+		// not a composition-time one: options may be bound from configuration after this runs, so
+		// deciding here would read a value that is not final yet.
+		builder.Services.TryAddEnumerable(
+			ServiceDescriptor.Singleton<
+				IAuthenticationEventHandler<ExternalTenantConfigurationChanged>,
+				ExternalTenantCacheInvalidationHandler>());
+
+		// The application's resolver registers under its own type; IExternalTenantResolver resolves
+		// to the caching decorator wrapping it. Both share a lifetime, so a scoped resolver is never
+		// captured by a longer-lived wrapper.
+		builder.Services.Replace(ServiceDescriptor.Describe(typeof(T), typeof(T), lifetime));
+		builder.Services.Replace(ServiceDescriptor.Describe(
+			typeof(IExternalTenantResolver),
+			sp => new CachingExternalTenantResolver(
+				(IExternalTenantResolver)sp.GetRequiredService(typeof(T)),
+				sp.GetRequiredService<ExternalTenantCache>()),
+			lifetime));
 
 		return builder;
 	}
 
-}
-
-/// <summary>
-/// Options for the dynamic External tenant resolver — caching, retry, etc.
-/// Reserved for 1.x expansion; v1.0 carries no fields (just establishes the options-class hook).
-/// </summary>
-public sealed class DynamicExternalTenantOptions {
-	// Reserved for 1.x — caching duration, retry policy, etc.
 }

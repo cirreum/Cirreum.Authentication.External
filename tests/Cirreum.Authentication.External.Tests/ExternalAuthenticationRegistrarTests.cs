@@ -30,10 +30,13 @@ public sealed class ExternalAuthenticationRegistrarTests {
 		return settings;
 	}
 
+	// AddAuthentication() rather than new AuthenticationBuilder(services): it registers what
+	// AddScheme's post-configure depends on (TimeProvider, data protection, encoders), so
+	// materializing scheme options here exercises the pipeline a real host builds.
 	private static (IServiceCollection Services, AuthenticationBuilder AuthBuilder) NewComposition() {
 		var services = new ServiceCollection();
 		services.AddLogging();
-		return (services, new AuthenticationBuilder(services));
+		return (services, services.AddAuthentication());
 	}
 
 	private static void Register(ExternalAuthenticationSettings settings, IServiceCollection services, AuthenticationBuilder authBuilder) =>
@@ -87,6 +90,65 @@ public sealed class ExternalAuthenticationRegistrarTests {
 		using var provider = services.BuildServiceProvider();
 		provider.GetRequiredService<IOptions<AuthenticationOptions>>().Value.SchemeMap
 			.Should().ContainKey(ExternalDefaults.AuthenticationScheme);
+	}
+
+	// -------------------------------------------------------------------------
+	// One options instance
+	// -------------------------------------------------------------------------
+
+	[Fact]
+	public void The_bare_options_are_the_instance_the_handler_reads() {
+		// AuthenticationHandler<TOptions> reads IOptionsMonitor.Get(scheme); the extractor, scheme
+		// selector and tenant cache resolve the bare type. Previously those were two separate
+		// objects synchronised by a hand-written property-by-property copy.
+		var (services, authBuilder) = NewComposition();
+		Register(SettingsFor("customerIdp"), services, authBuilder);
+
+		using var provider = services.BuildServiceProvider();
+
+		var bare = provider.GetRequiredService<ExternalAuthenticationOptions>();
+		var named = provider
+			.GetRequiredService<IOptionsMonitor<ExternalAuthenticationOptions>>()
+			.Get("customerIdp");
+
+		bare.Should().BeSameAs(named);
+	}
+
+	[Fact]
+	public void Configured_settings_reach_the_options_the_handler_reads() {
+		// The copy that used to bridge the two instances had fallen three properties behind — the
+		// tenant-cache settings reached the bare singleton but never the handler's options. Nothing
+		// failed, because the only reader of those three happened to hold the other instance.
+		var (services, authBuilder) = NewComposition();
+		var settings = SettingsFor("customerIdp");
+		settings.Instances["customerIdp"].ClockSkewSeconds = 30;
+		settings.Instances["customerIdp"].TenantResolverCache.DurationSeconds = 90;
+
+		Register(settings, services, authBuilder);
+
+		using var provider = services.BuildServiceProvider();
+		var options = provider
+			.GetRequiredService<IOptionsMonitor<ExternalAuthenticationOptions>>()
+			.Get("customerIdp");
+
+		options.ClockSkew.Should().Be(TimeSpan.FromSeconds(30));
+		options.TenantCacheDuration.Should().Be(TimeSpan.FromSeconds(90));
+	}
+
+	[Fact]
+	public void The_metadata_client_carries_a_bounded_timeout() {
+		// HttpClient's own default is 100 seconds, long enough that a tenant IdP which stops
+		// responding holds the authenticating request open rather than failing it.
+		var (services, authBuilder) = NewComposition();
+		Register(SettingsFor("customerIdp"), services, authBuilder);
+
+		using var provider = services.BuildServiceProvider();
+		var client = provider
+			.GetRequiredService<IHttpClientFactory>()
+			.CreateClient(ExternalDefaults.HttpClientName);
+
+		client.Timeout.Should().Be(ExternalDefaults.DefaultMetadataTimeout);
+		client.Timeout.Should().BeLessThan(TimeSpan.FromSeconds(100));
 	}
 
 	// -------------------------------------------------------------------------
@@ -165,8 +227,10 @@ public sealed class ExternalAuthenticationRegistrarTests {
 		});
 		using var scope = provider.CreateScope();
 
-		scope.ServiceProvider.GetRequiredService<IExternalTenantResolver>()
-			.Should().BeOfType<ScopedStoreResolver>();
+		// The proof is that ValidateScopes/ValidateOnBuild above did not throw. Resolving under the
+		// scope confirms the scoped store is reachable through the registered chain.
+		scope.ServiceProvider.GetRequiredService<IExternalTenantResolver>().Should().NotBeNull();
+		scope.ServiceProvider.GetRequiredService<ScopedStoreResolver>().Should().NotBeNull();
 	}
 
 	[Fact]

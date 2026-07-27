@@ -71,4 +71,21 @@ public class ExternalAuthenticationOptions : AuthenticationSchemeOptions {
 	/// </summary>
 	public TimeSpan ClockSkew { get; set; } = TimeSpan.FromMinutes(5);
 
+	/// <summary>
+	/// How long a resolved tenant configuration is reused. <see cref="TimeSpan.Zero"/> disables
+	/// tenant caching.
+	/// </summary>
+	public TimeSpan TenantCacheDuration { get; set; } = TimeSpan.Zero;
+
+	/// <summary>
+	/// How long a "tenant not found" resolution is remembered.
+	/// </summary>
+	public TimeSpan TenantCacheNotFoundDuration { get; set; } =
+		TimeSpan.FromSeconds(ExternalDefaults.DefaultTenantCacheNotFoundSeconds);
+
+	/// <summary>
+	/// The maximum number of distinct tenants held in the resolution cache.
+	/// </summary>
+	public int TenantCacheMaxEntries { get; set; } = ExternalDefaults.DefaultTenantCacheMaxEntries;
+
 }

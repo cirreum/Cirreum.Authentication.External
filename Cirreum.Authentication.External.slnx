@@ -9,9 +9,12 @@
     <File Path="build/Versioning.props" />
   </Folder>
   <Folder Name="/docs/">
+    <File Path="docs/BACKLOG.md" />
     <File Path="docs/CHANGELOG.md" />
     <File Path="docs/MIGRATION-v1.md" />
+    <File Path="docs/MIGRATION-v2.md" />
     <File Path="docs/RELEASE-NOTES-v1.0.0.md" />
+    <File Path="docs/RELEASE-NOTES-v2.0.0.md" />
   </Folder>
   <Folder Name="/publish/">
     <File Path=".github/workflows/publish.yml" />

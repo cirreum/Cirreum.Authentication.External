@@ -73,17 +73,12 @@ public class ExternalAuthenticationHandler(
 			tokenClientId ??= parsedToken.TryGetPayloadValue<string>("client_id", out var cid) ? cid : null;
 		}
 
-		// 4a. Reject tokens with missing or invalid type
-		// This check happens before tenant resolution to fail fast
-		if (string.IsNullOrEmpty(tokenType)) {
-			this.Logger.LogWarning("Rejected token with missing typ header");
-			return this.FailWithMessage("Token must have a typ header");
-		}
-
-		if (tokenType.Equals("id_token", StringComparison.OrdinalIgnoreCase)) {
-			this.Logger.LogWarning("Rejected ID token used as access token");
-			return this.FailWithMessage("ID tokens cannot be used as access tokens");
-		}
+		// An ID token presented as an access token is rejected by audience validation below, not by
+		// inspecting what the token says about itself. Nothing in OpenID Connect marks an ID token
+		// as one — there is no standard `typ` value for it — so any header or claim check would be
+		// vendor-specific and silent where the vendor does not participate. Audience validation
+		// holds everywhere instead: a tenant's ValidAudiences name this API, an ID token's `aud`
+		// names the client that requested sign-in, and validation is mandatory and fails closed.
 
 		// 5. Resolve tenant configuration
 		var resolutionContext = new ExternalResolutionContext {
@@ -113,13 +108,16 @@ public class ExternalAuthenticationHandler(
 			return this.FailWithMessage("Tenant is disabled");
 		}
 
-		// 7a. Validate token type (access token required if configured)
-		// Note: null/missing typ and id_token are already rejected before tenant resolution
+		// 7a. Require the RFC 9068 access-token type, for tenants whose IdP emits it. Opt-in per
+		// tenant because `at+jwt` is opt-in in practice — Entra, Cognito and Auth0 all emit plain
+		// `JWT` for access tokens by default — so requiring it globally would reject valid tokens
+		// from most IdPs. A missing `typ` fails this check, which is the intent when a tenant has
+		// asserted their IdP stamps it.
 		if (tenantConfig.RequireAccessTokenType) {
-			if (!tokenType!.Equals("at+jwt", StringComparison.OrdinalIgnoreCase)) {
+			if (!string.Equals(tokenType, "at+jwt", StringComparison.OrdinalIgnoreCase)) {
 				this.Logger.LogWarning(
 					"Token type validation failed for tenant {TenantSlug}: expected 'at+jwt', got '{TokenType}'",
-					tenantSlug, tokenType);
+					tenantSlug, tokenType ?? "(none)");
 				return this.FailWithMessage("Token must be an access token (at+jwt)");
 			}
 		}

@@ -9,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 /// <summary>
 /// Registrar for External (BYOID) authorization provider instances.
@@ -105,20 +106,7 @@ public sealed class ExternalAuthenticationRegistrar
 
 		services.AddSingleton(new ExternalSchemeClaim(settings.Scheme));
 
-		// Build ExternalAuthenticationOptions from settings
-		var options = BuildOptionsFromSettings(settings);
-
-		// Register the options as a singleton for the handler and other services
-		services.TryAddSingleton(options);
-
-		// Register core services that don't require the resolver
-		services.TryAddSingleton<ITenantIdentifierExtractor>(sp =>
-			new TenantIdentifierExtractor(sp.GetRequiredService<ExternalAuthenticationOptions>()));
-
-		services.TryAddSingleton<IExternalConfigurationManager>(sp =>
-			new ExternalConfigurationManager(
-				options.JwksCacheDuration,
-				sp.GetRequiredService<ILogger<ExternalConfigurationManager>>()));
+		var scheme = settings.Scheme;
 
 		// Register the authentication handler under the instance key — the framework contract
 		// is that the instance key IS the scheme name (the base registrar stamps it onto
@@ -127,19 +115,35 @@ public sealed class ExternalAuthenticationRegistrar
 		// Note: The handler will fail gracefully if IExternalTenantResolver is not registered.
 		// The resolver is added via the AddExternalTenantResolver<T>() extension method.
 		authBuilder.AddScheme<ExternalAuthenticationOptions, ExternalAuthenticationHandler>(
-			settings.Scheme,
-			configureOptions: o => {
-				o.TenantIdentifierSource = options.TenantIdentifierSource;
-				o.TenantHeaderName = options.TenantHeaderName;
-				o.TenantPathSegmentIndex = options.TenantPathSegmentIndex;
-				o.ValidateTenantInPath = options.ValidateTenantInPath;
-				o.ValidationPathSegmentIndex = options.ValidationPathSegmentIndex;
-				o.JwksCacheDuration = options.JwksCacheDuration;
-				o.RequireHttpsMetadata = options.RequireHttpsMetadata;
-				o.TenantNotFoundBehavior = options.TenantNotFoundBehavior;
-				o.DetailedErrors = options.DetailedErrors;
-				o.ClockSkew = options.ClockSkew;
-			});
+			scheme,
+			configureOptions: o => ApplySettings(settings, o));
+
+		// AuthenticationHandler<TOptions> reads its options through IOptionsMonitor.Get(scheme), so
+		// the named instance configured above is the one the handler sees. Services outside the
+		// handler resolve the bare type instead; registering that as a projection of the same named
+		// instance keeps every consumer on one object. Registering a separately-built singleton
+		// would create a second instance that only stays correct while someone remembers to update
+		// two places at once.
+		services.TryAddSingleton(sp =>
+			sp.GetRequiredService<IOptionsMonitor<ExternalAuthenticationOptions>>().Get(scheme));
+
+		// Register core services that don't require the resolver
+		services.TryAddSingleton<ITenantIdentifierExtractor>(sp =>
+			new TenantIdentifierExtractor(sp.GetRequiredService<ExternalAuthenticationOptions>()));
+
+		// A named client so an app can reshape the outbound handler without the framework growing a
+		// setting per knob. The timeout is the default that matters: HttpClient's own is 100
+		// seconds, long enough that a tenant IdP which stops responding holds the authenticating
+		// request open rather than failing it.
+		services.AddHttpClient(ExternalDefaults.HttpClientName, static client => {
+			client.Timeout = ExternalDefaults.DefaultMetadataTimeout;
+		});
+
+		services.TryAddSingleton<IExternalConfigurationManager>(sp =>
+			new ExternalConfigurationManager(
+				sp.GetRequiredService<ExternalAuthenticationOptions>().JwksCacheDuration,
+				sp.GetRequiredService<IHttpClientFactory>(),
+				sp.GetRequiredService<ILogger<ExternalConfigurationManager>>()));
 
 		// Register the scheme selector — the dynamic forward resolver
 		// iterates ISchemeSelector services in (Category, Priority) order and picks
@@ -147,23 +151,27 @@ public sealed class ExternalAuthenticationRegistrar
 		// + Bearer token are both present.
 		services.AddSingleton<ISchemeSelector>(sp =>
 			new ExternalAuthenticationSchemeSelector(
-				settings.Scheme,
+				scheme,
 				sp.GetRequiredService<ExternalAuthenticationOptions>()));
 	}
 
-	private static ExternalAuthenticationOptions BuildOptionsFromSettings(
-		ExternalAuthenticationInstanceSettings settings) {
+	// The one place settings become options. It runs as the named-options configuration for the
+	// scheme, so there is nowhere else a property can be set — and nowhere else to forget one.
+	private static void ApplySettings(
+		ExternalAuthenticationInstanceSettings settings,
+		ExternalAuthenticationOptions options) {
 
-		var options = new ExternalAuthenticationOptions {
-			TenantHeaderName = settings.TenantHeaderName,
-			TenantPathSegmentIndex = settings.TenantPathSegmentIndex,
-			ValidateTenantInPath = settings.ValidateTenantInPath,
-			ValidationPathSegmentIndex = settings.ValidationPathSegmentIndex,
-			JwksCacheDuration = TimeSpan.FromMinutes(settings.JwksCacheDurationMinutes),
-			RequireHttpsMetadata = settings.RequireHttpsMetadata,
-			DetailedErrors = settings.DetailedErrors,
-			ClockSkew = TimeSpan.FromSeconds(settings.ClockSkewSeconds)
-		};
+		options.TenantHeaderName = settings.TenantHeaderName;
+		options.TenantPathSegmentIndex = settings.TenantPathSegmentIndex;
+		options.ValidateTenantInPath = settings.ValidateTenantInPath;
+		options.ValidationPathSegmentIndex = settings.ValidationPathSegmentIndex;
+		options.JwksCacheDuration = TimeSpan.FromMinutes(settings.JwksCacheDurationMinutes);
+		options.RequireHttpsMetadata = settings.RequireHttpsMetadata;
+		options.DetailedErrors = settings.DetailedErrors;
+		options.ClockSkew = TimeSpan.FromSeconds(settings.ClockSkewSeconds);
+		options.TenantCacheDuration = TimeSpan.FromSeconds(settings.TenantResolverCache.DurationSeconds);
+		options.TenantCacheNotFoundDuration = TimeSpan.FromSeconds(settings.TenantResolverCache.NotFoundDurationSeconds);
+		options.TenantCacheMaxEntries = settings.TenantResolverCache.MaxEntries;
 
 		// Parse TenantIdentifierSource
 		if (Enum.TryParse<TenantIdentifierSource>(settings.TenantIdentifierSource, ignoreCase: true, out var source)) {
@@ -174,8 +182,6 @@ public sealed class ExternalAuthenticationRegistrar
 		if (Enum.TryParse<TenantNotFoundBehavior>(settings.TenantNotFoundBehavior, ignoreCase: true, out var behavior)) {
 			options.TenantNotFoundBehavior = behavior;
 		}
-
-		return options;
 	}
 
 }
