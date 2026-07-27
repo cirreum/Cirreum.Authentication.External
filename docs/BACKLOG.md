@@ -26,38 +26,27 @@ upgrade, a coordinated multi-repo rollout).
 **Noted:** 2026-07-18 *(shrunk 2026-07-19 — the original item's test project, composition-path
 tests for `AddExternalTenantResolver<T>`, and `TenantIdentifierExtractor` coverage shipped.
 Shrunk again 2026-07-26 — `ExternalConfigurationManager` now has `RequireHttpsMetadata`
-enforcement and refresh coverage.)*
+enforcement and refresh coverage, and `ExternalAuthenticationHandlerTests` establishes the handler
+harness.)*
 
-What remains is the request-path machinery that needs a real harness:
-`ExternalAuthenticationHandler` (token validation flow, `TenantNotFoundBehavior` branches,
-`ValidateTenantInPath` defense-in-depth check, `RequireAccessTokenType`) plus
-`ExternalAuthenticationSchemeSelector`. Model the handler harness on
-`SessionTicketAuthenticationHandlerTests` / the ApiKey handler tests (DefaultHttpContext + scheme
-+ NullLogger).
+The harness now exists in `ExternalAuthenticationHandlerTests` and covers the pre-checks that run
+before signature validation. What it does not yet reach is anything past step 8, because that needs
+a stub metadata document and signing key: the successful-validation path, claim normalization via
+`ClaimMappings`, `TenantNotFoundBehavior` branches, `ValidateTenantInPath`, and
+`RequireAccessTokenType`. `ExternalAuthenticationSchemeSelector` is also still uncovered.
 
-### Support AWS Cognito tenants: audience opt-out coupled to a token-use requirement
+### Verify a real AWS Cognito tenant end to end
 
-**SemVer:** Minor
+**SemVer:** Unspecified
 **Trigger:** A prospective tenant runs AWS Cognito.
 **Noted:** 2026-07-26
 
-Cognito does not fit the audience-validation model External relies on. Its **access** tokens put the
-app client ID in `client_id` and may carry no `aud` at all, unless resource binding adds one. Its
-**ID** tokens put the app client ID in `aud`. `ExternalAuthenticationHandler` sets
-`ValidateAudience = true` unconditionally, so a Cognito tenant's access tokens fail validation today
-and External cannot serve them.
+`AudienceClaim` + `RequiredClaims` shipped in 2.0.0 to make a Cognito-shaped tenant expressible
+(`AudienceClaim = "client_id"`, `RequiredClaims = { "token_use": "access" }`), and the pre-check
+paths are covered by `ExternalAuthenticationHandlerTests`. What has **not** been exercised is a real
+Cognito token against a real Cognito JWKS endpoint — the design was derived from documentation, not
+from a working integration.
 
-Cognito does mark the distinction, in a claim inside the JWT: `token_use` is `"access"` or `"id"`.
-(Not to be confused with `access_token`, the OAuth *response field* carrying the JWT — `token_use` is
-a claim within it.) No other IdP emits it, so it can never be required globally.
-
-**Implement the two halves together or not at all.** Relaxing audience validation for a tenant is
-what makes `token_use` load-bearing: audience validation is otherwise the only thing stopping an ID
-token being replayed as a bearer token, and OpenID Connect defines no standard marker for an ID
-token to fall back on. A per-tenant shape along the lines of "validate `client_id` against
-`AllowedClientIds` instead of `aud`, **and** require `token_use == access`" keeps them inseparable,
-so no configuration can select the dangerous half alone.
-
-What must not ship is a bare `ValidateAudience: false` switch, or a standalone `token_use` check —
-the first removes the defense, the second looks like a replacement for it while applying to one
-vendor.
+Worth confirming when a Cognito tenant is actually available: that Cognito's issuer matches its
+metadata document's `issuer` (or that `ValidIssuerOverride` is needed), and that nothing else in the
+validation path assumes an `aud`.

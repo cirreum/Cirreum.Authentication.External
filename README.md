@@ -144,6 +144,27 @@ public sealed class MyTenantResolver(IDbConnection db) : IExternalTenantResolver
 
 `ExternalResolutionContext` also carries the token's issuer and audience, so a resolver can key on those instead of — or alongside — the tenant slug.
 
+### Tenants whose IdP doesn't use `aud`
+
+`ValidAudiences` must name **your API**, never a client ID — that is what separates an access token from an ID token, since an ID token's audience is the client that requested sign-in.
+
+Some IdPs don't fit that model. AWS Cognito puts the app client ID in `client_id` on access tokens and may omit `aud` entirely, while its ID tokens carry it in `aud`, so validating `aud` rejects every access token. Cognito does mark the difference, with a `token_use` claim that is `access` or `id`:
+
+```csharp
+return new ExternalTenantConfig {
+    Slug = row.Slug,
+    IsEnabled = row.IsActive,
+    MetadataAddress = row.MetadataUrl,
+    ValidAudiences = [row.AppClientId],
+    AudienceClaim = "client_id",
+    RequiredClaims = new Dictionary<string, string> { ["token_use"] = "access" }
+};
+```
+
+**These two are coupled and the framework enforces it.** Moving the audience off `aud` removes the check that distinguishes an access token from an ID token, so a config that sets `AudienceClaim` without any `RequiredClaims` is rejected at resolution time and authenticates no one. You can't get the dangerous half on its own.
+
+`RequiredClaims` works on its own for any IdP that marks token kind with a claim. Values are compared ordinally and case-sensitively; an absent claim fails.
+
 ## What changed
 
 ### Selector-based dispatch
@@ -157,6 +178,7 @@ The legacy static `ExternalSchemeSelector` helper class is retired. Detection lo
 ## Security considerations
 
 - **Audience is the boundary** — `ValidAudiences` on the resolved tenant config must name **your API**, never a client ID. An access token's audience is the API it was issued for; an ID token's audience is the client that requested sign-in. This is what stops an ID token being replayed against your API as a bearer token, and it holds on every IdP — OpenID Connect defines no standard marker identifying a token as an ID token, so nothing else can. Audience validation is mandatory and fails closed: a tenant config with no valid audiences rejects every token rather than skipping the check.
+- **Relocating the audience requires a replacement discriminator** — `AudienceClaim` moves the check off `aud` for an IdP that carries the audience elsewhere, which also moves it off the access-token/ID-token boundary. `RequiredClaims` must then supply a claim that restores it. The framework rejects a tenant config that does the first without the second, so this cannot be got wrong by setting one field and forgetting the other.
 - **Tenant configuration trust** — your `IExternalTenantResolver` must return only verified, currently-active tenant configurations. When resolution caching is enabled, publish `ExternalTenantConfigurationChanged` on deactivation rather than waiting out `DurationSeconds`.
 - **HTTPS enforcement** — `RequireHttpsMetadata: true` (default) rejects a non-HTTPS metadata address at fetch time. It does **not** control certificate validation, which always applies; use the named HTTP client above if a development environment needs a custom handler.
 - **Clock skew** — `ClockSkewSeconds: 30` is a reasonable default; tighten for high-trust tenants.

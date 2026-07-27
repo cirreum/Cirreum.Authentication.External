@@ -187,6 +187,41 @@ await publisher.PublishAsync(new ExternalTenantConfigurationChanged(tenantSlug, 
 The framework invalidates that tenant's entry on every replica. There is no cache interface to
 implement.
 
+### Tenants whose IdP does not fit the standard audience model
+
+Two new properties on `ExternalTenantConfig`, both plain data so they live in your tenant table
+alongside everything else:
+
+```csharp
+public string AudienceClaim { get; init; } = "aud";
+public IReadOnlyDictionary<string, string>? RequiredClaims { get; init; }
+```
+
+AWS Cognito is the case that motivates them. Its **access** tokens carry the app client ID in
+`client_id` and may have no `aud` at all; its **ID** tokens carry it in `aud`. So validating `aud`
+rejects every Cognito access token, and — because the audience is what normally separates the two
+kinds — moving that check somewhere else would leave nothing distinguishing them. Cognito does mark
+the difference, with a `token_use` claim that is `access` or `id`. A Cognito tenant's row becomes:
+
+```csharp
+return new ExternalTenantConfig {
+	Slug = row.Slug,
+	IsEnabled = row.IsActive,
+	MetadataAddress = row.MetadataUrl,
+	ValidAudiences = [row.AppClientId],
+	AudienceClaim = "client_id",
+	RequiredClaims = new Dictionary<string, string> { ["token_use"] = "access" }
+};
+```
+
+**The two are coupled, and the framework enforces it.** A configuration that sets `AudienceClaim`
+away from `aud` without any `RequiredClaims` is rejected at resolution time and authenticates no
+one, because that combination would silently accept ID tokens as bearer credentials. You cannot
+select the dangerous half alone.
+
+`RequiredClaims` is usable on its own for any IdP that marks token kind with a claim — the values are
+compared ordinally and case-sensitively, and an absent claim fails.
+
 ### Reshaping the metadata HTTP client
 
 Metadata and signing-key retrieval uses a named `IHttpClientFactory` client, registered with a

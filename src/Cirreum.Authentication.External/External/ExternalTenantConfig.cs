@@ -35,7 +35,51 @@ public record ExternalTenantConfig {
 	/// Expected audience claim value(s) for token validation.
 	/// At least one audience must match for the token to be valid.
 	/// </summary>
+	/// <remarks>
+	/// These must name <strong>your API</strong>, never a client ID. This is the boundary between an
+	/// access token and an ID token: an access token's audience is the API it was issued for, while
+	/// an ID token's audience is the client that requested sign-in. List a client ID here and ID
+	/// tokens issued to that client will validate successfully.
+	/// </remarks>
 	public required IReadOnlyList<string> ValidAudiences { get; init; }
+
+	/// <summary>
+	/// The claim carrying the token's audience. Defaults to <c>aud</c>.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// Set this only for an IdP that puts the audience somewhere else. AWS Cognito is the case that
+	/// motivates it: its access tokens carry the app client ID in <c>client_id</c> and may have no
+	/// <c>aud</c> at all, while its ID tokens carry it in <c>aud</c> — so validating <c>aud</c>
+	/// rejects every access token, and the token kinds are distinguished by neither.
+	/// </para>
+	/// <para>
+	/// Changing this moves the check off the standard audience validation and onto an explicit
+	/// comparison against <see cref="ValidAudiences"/>, which means it no longer separates access
+	/// tokens from ID tokens on its own. <see cref="RequiredClaims"/> must therefore be populated
+	/// with something that does; a configuration that moves the audience without supplying one is
+	/// rejected at resolution time rather than silently accepting ID tokens.
+	/// </para>
+	/// </remarks>
+	public string AudienceClaim { get; init; } = ExternalDefaults.DefaultAudienceClaim;
+
+	/// <summary>
+	/// Claims the token must carry, with exactly these values. Key = claim type, value = required
+	/// value.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// For an IdP that marks what kind of token it issued with a claim of its own. AWS Cognito emits
+	/// <c>token_use</c>, which is <c>access</c> on an access token and <c>id</c> on an ID token, so a
+	/// Cognito tenant sets <c>{ "token_use": "access" }</c>. No other major IdP emits that claim,
+	/// which is why this is per-tenant data rather than a framework-wide check.
+	/// </para>
+	/// <para>
+	/// Comparison is ordinal and case-sensitive — these are protocol values, not user input. A claim
+	/// that is absent fails, as does a token that cannot be read.
+	/// </para>
+	/// </remarks>
+	public IReadOnlyDictionary<string, string>? RequiredClaims { get; init; }
 
 	/// <summary>
 	/// Optional: Override the issuer validation.

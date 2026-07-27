@@ -21,6 +21,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) — [SemVer](ht
   replica; there is no cache interface to implement, mirroring how `CredentialRevoked` reaches the
   denylist. Cross-replica delivery needs no extra wiring where coordination broadcast is already
   configured.
+- **`ExternalTenantConfig.AudienceClaim` and `RequiredClaims`**, for tenants whose IdP does not fit
+  the standard audience model. AWS Cognito is the case: its access tokens carry the app client ID in
+  `client_id` and may have no `aud` at all, while its ID tokens carry it in `aud` — so validating
+  `aud` rejects every access token, and neither kind is distinguished by it. Such a tenant sets
+  `AudienceClaim = "client_id"` and `RequiredClaims = { "token_use": "access" }`.
+
+  The two are coupled by the framework rather than by documentation: moving the audience off `aud`
+  removes the check that separates an access token from an ID token, so a configuration that does so
+  without supplying a claim that distinguishes them is **rejected at resolution time**. Both are
+  plain data on the tenant record, so a tenant of this shape is a database row rather than a code
+  path, and no vendor is named anywhere in the framework.
 - **`ExternalDefaults.HttpClientName`** — the named `IHttpClientFactory` client used for tenant IdP
   metadata and signing keys, so an application can supply a proxy, pinned certificate, or different
   pooling without the package growing a setting for each. Registered with
@@ -62,6 +73,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) — [SemVer](ht
 
 ### Fixed
 
+- **A token carrying no `aud` claim crashed the request instead of failing authentication.** The
+  pre-read used `GetPayloadValue`, which throws when the claim is absent, so the exception escaped
+  `HandleAuthenticateAsync` and surfaced as a 500 rather than a 401. Omitting `aud` is legal, and it
+  is what AWS Cognito issues.
 - **Tenant-cache settings never reached the handler's options.** The hand-written copy between the
   two options instances had fallen three properties behind. Nothing failed, because the only reader
   of those three held the other instance — the class of defect the single-instance change above

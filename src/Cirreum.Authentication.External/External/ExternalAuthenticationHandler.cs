@@ -58,15 +58,20 @@ public class ExternalAuthenticationHandler(
 		}
 
 		// 4. Pre-read token to get issuer/audience for resolution context and early validation
+		JsonWebToken? parsedToken = null;
 		string? tokenIssuer = null;
 		string? tokenAudience = null;
 		string? tokenType = null;
 		string? tokenClientId = null;
 
 		if (this._tokenHandler.CanReadToken(token)) {
-			var parsedToken = this._tokenHandler.ReadJsonWebToken(token);
+			parsedToken = this._tokenHandler.ReadJsonWebToken(token);
 			tokenIssuer = parsedToken.Issuer;
-			tokenAudience = parsedToken.GetPayloadValue<string>("aud");
+			// TryGetPayloadValue, not GetPayloadValue: the latter throws when the claim is absent,
+			// which turns a token carrying no `aud` — legal, and what AWS Cognito issues — into an
+			// unhandled exception and a 500 rather than a failed authentication.
+			tokenAudience = parsedToken.TryGetPayloadValue<string>(
+				ExternalDefaults.DefaultAudienceClaim, out var audienceValue) ? audienceValue : null;
 			tokenType = parsedToken.Typ;
 			// Try azp first (OAuth 2.0), then client_id (some IdPs use this)
 			tokenClientId = parsedToken.TryGetPayloadValue<string>("azp", out var azp) ? azp : null;
@@ -79,6 +84,8 @@ public class ExternalAuthenticationHandler(
 		// vendor-specific and silent where the vendor does not participate. Audience validation
 		// holds everywhere instead: a tenant's ValidAudiences name this API, an ID token's `aud`
 		// names the client that requested sign-in, and validation is mandatory and fails closed.
+		// A tenant whose IdP does not fit that model moves the check via AudienceClaim, and then
+		// owes a discriminator through RequiredClaims — see step 7c.
 
 		// 5. Resolve tenant configuration
 		var resolutionContext = new ExternalResolutionContext {
@@ -122,7 +129,64 @@ public class ExternalAuthenticationHandler(
 			}
 		}
 
-		// 7b. Validate authorized party (azp/client_id) if configured
+		// 7b. Claims this tenant's IdP is known to stamp. Rejecting here, before the signature is
+		// verified, is safe because step 10 still has to pass — a forged claim value cannot survive
+		// both gates — and it keeps the cheap check ahead of the expensive one.
+		var usesStandardAudience = string.Equals(
+			tenantConfig.AudienceClaim, ExternalDefaults.DefaultAudienceClaim, StringComparison.Ordinal);
+
+		// A tenant that moves the audience off `aud` has moved it off the check that separates an
+		// access token from an ID token, so it must supply something that does. Refusing the
+		// configuration outright is the point: the alternative is a tenant silently accepting ID
+		// tokens as bearer credentials because one field was set without the other.
+		if (!usesStandardAudience && tenantConfig.RequiredClaims is not { Count: > 0 }) {
+			this.Logger.LogError(
+				"Tenant {TenantSlug} sets AudienceClaim to '{AudienceClaim}' without any RequiredClaims. " +
+				"Moving the audience off '{DefaultAudienceClaim}' removes the check that distinguishes an " +
+				"access token from an ID token, so a claim that distinguishes them must be required instead.",
+				tenantSlug, tenantConfig.AudienceClaim, ExternalDefaults.DefaultAudienceClaim);
+			return this.FailWithMessage("Tenant configuration is invalid");
+		}
+
+		if (tenantConfig.RequiredClaims is { Count: > 0 }) {
+			if (parsedToken is null) {
+				this.Logger.LogWarning(
+					"Required-claim validation failed for tenant {TenantSlug}: token could not be read",
+					tenantSlug);
+				return this.FailWithMessage("Token is not a readable JWT");
+			}
+
+			foreach (var (claimType, requiredValue) in tenantConfig.RequiredClaims) {
+				var actual = parsedToken.TryGetPayloadValue<string>(claimType, out var value) ? value : null;
+				if (!string.Equals(actual, requiredValue, StringComparison.Ordinal)) {
+					this.Logger.LogWarning(
+						"Required-claim validation failed for tenant {TenantSlug}: '{ClaimType}' was '{Actual}', expected '{Expected}'",
+						tenantSlug, claimType, actual ?? "(absent)", requiredValue);
+					return this.FailWithMessage($"Token claim '{claimType}' does not have the required value");
+				}
+			}
+		}
+
+		// 7c. Audience, when the tenant's IdP carries it somewhere other than `aud`.
+		// TokenValidationParameters can only validate `aud`, so standard validation is switched off
+		// below and the equivalent check happens here against the same ValidAudiences.
+		if (!usesStandardAudience) {
+			var actualAudience = parsedToken is not null
+				&& parsedToken.TryGetPayloadValue<string>(tenantConfig.AudienceClaim, out var aud)
+					? aud
+					: null;
+
+			if (actualAudience is null
+				|| !tenantConfig.ValidAudiences.Contains(actualAudience, StringComparer.Ordinal)) {
+
+				this.Logger.LogWarning(
+					"Audience validation failed for tenant {TenantSlug}: claim '{AudienceClaim}' was '{Actual}'",
+					tenantSlug, tenantConfig.AudienceClaim, actualAudience ?? "(absent)");
+				return this.FailWithMessage("Token audience is not valid for this tenant");
+			}
+		}
+
+		// 7d. Validate authorized party (azp/client_id) if configured
 		if (tenantConfig.AllowedClientIds is { Count: > 0 }) {
 			if (string.IsNullOrEmpty(tokenClientId)) {
 				this.Logger.LogWarning(
@@ -157,7 +221,9 @@ public class ExternalAuthenticationHandler(
 		var validationParameters = new TokenValidationParameters {
 			ValidateIssuer = true,
 			ValidIssuer = tenantConfig.ValidIssuerOverride ?? oidcConfig.Issuer,
-			ValidateAudience = true,
+			// Off only when the tenant carries its audience in another claim, which step 7c has
+			// already checked against these same ValidAudiences. It is never simply skipped.
+			ValidateAudience = usesStandardAudience,
 			ValidAudiences = tenantConfig.ValidAudiences,
 			ValidateLifetime = true,
 			ValidateIssuerSigningKey = true,

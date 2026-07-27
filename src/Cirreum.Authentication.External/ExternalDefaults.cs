@@ -42,6 +42,12 @@ public static class ExternalDefaults {
 	public const int DefaultTenantCacheMaxEntries = 1_000;
 
 	/// <summary>
+	/// The claim that carries a token's audience under OAuth 2.0 and OpenID Connect, and the default
+	/// for <c>ExternalTenantConfig.AudienceClaim</c>.
+	/// </summary>
+	public const string DefaultAudienceClaim = "aud";
+
+	/// <summary>
 	/// The name of the <see cref="System.Net.Http.IHttpClientFactory"/> client used to retrieve
 	/// tenant IdP metadata and signing keys.
 	/// </summary>
