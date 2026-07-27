@@ -441,6 +441,33 @@ public sealed class ExternalAuthenticationHandlerTests {
 	}
 
 	[Fact]
+	public async Task A_token_carrying_no_audience_claim_at_all_validates_end_to_end() {
+		// The Cognito shape, start to finish: no `aud` anywhere, the app client id in `client_id`,
+		// and `token_use` separating an access token from an ID token. This is what proves the
+		// relocation is real support rather than configuration that expresses a shape nothing can
+		// actually serve — no stage downstream may assume an audience claim exists.
+		var token = CreateToken(new Dictionary<string, object> {
+			["token_use"] = "access",
+			["sub"] = "user-1",
+			["client_id"] = ApiAudience
+		});
+
+		// Guard the premise: a token that quietly carried an `aud` would make this test vacuous.
+		new JsonWebTokenHandler().ReadJsonWebToken(token)
+			.TryGetPayloadValue<string>("aud", out _).Should().BeFalse();
+
+		var result = await AuthenticateAsync(
+			TenantConfig(
+				audienceClaim: "client_id",
+				requiredClaims: new Dictionary<string, string> { ["token_use"] = "access" }),
+			token,
+			new StubConfigurationManager());
+
+		result.Succeeded.Should().BeTrue(result.Failure?.Message ?? "(no failure recorded)");
+		result.Principal!.FindFirst(ExternalClaimTypes.TenantSlug)!.Value.Should().Be(Slug);
+	}
+
+	[Fact]
 	public async Task An_array_valued_relocated_audience_validates() {
 		var token = CreateToken(new Dictionary<string, object> {
 			["token_use"] = "access",

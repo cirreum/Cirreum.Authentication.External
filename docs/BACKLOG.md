@@ -19,18 +19,4 @@ upgrade, a coordinated multi-repo rollout).
 
 ## Queued
 
-### Verify a real AWS Cognito tenant end to end
-
-**SemVer:** Unspecified  
-**Trigger:** A prospective tenant runs AWS Cognito.  
-**Noted:** 2026-07-26
-
-`AudienceClaim` + `RequiredClaims` shipped in 2.0.0 to make a Cognito-shaped tenant expressible
-(`AudienceClaim = "client_id"`, `RequiredClaims = { "token_use": "access" }`), and the pre-check
-paths are covered by `ExternalAuthenticationHandlerTests`. What has **not** been exercised is a real
-Cognito token against a real Cognito JWKS endpoint — the design was derived from documentation, not
-from a working integration.
-
-Worth confirming when a Cognito tenant is actually available: that Cognito's issuer matches its
-metadata document's `issuer` (or that `ValidIssuerOverride` is needed), and that nothing else in the
-validation path assumes an `aud`.
+_Empty._
