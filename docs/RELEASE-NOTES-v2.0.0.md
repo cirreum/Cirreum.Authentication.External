@@ -1,6 +1,7 @@
 # Cirreum.Authentication.External 2.0.0
 
-A security and stewardship release for the BYOID scheme, plus tenant-resolution caching.
+A security and stewardship release for the BYOID scheme, plus tenant-resolution caching and a seam
+for IdPs that do not fit the standard audience model.
 
 Full detail and step-by-step upgrade instructions: [`docs/MIGRATION-v2.md`](MIGRATION-v2.md).
 
@@ -44,26 +45,62 @@ is legal, so requiring it turned away valid tokens from IdPs you do not control.
 An ID token presented as an access token is still rejected — by audience validation, which is
 mandatory and fails closed. Worth confirming for your tenants: **`ValidAudiences` must name your API,
 never a client ID.** An access token's audience is the API it was issued for; an ID token's audience
-is the client that requested sign-in.
+is the client that requested sign-in. For tenants whose IdP does not work that way, see below.
 
 ## New
 
-**Tenant-resolution caching.** `IExternalTenantResolver` runs on every authenticated request, so a
-resolver reading tenant rows from a database made a round trip per request while JWKS and metadata
-were already cached. Off by default — caching widens the window in which a tenant disabled at the
-source still authenticates. Enable with `TenantResolverCache.DurationSeconds`.
+### A seam for IdPs that do not use `aud`
+
+`ExternalTenantConfig` gains `AudienceClaim` and `RequiredClaims`.
+
+AWS Cognito is the case that motivates them: its **access** tokens carry the app client ID in
+`client_id` and may have no `aud` at all, while its **ID** tokens carry it in `aud`. Validating `aud`
+therefore rejects every Cognito access token, and the audience does not separate the two kinds for
+that vendor at all. Cognito does mark the difference, with a `token_use` claim that is `access` or
+`id`:
+
+```csharp
+return new ExternalTenantConfig {
+	// ...
+	ValidAudiences = [row.AppClientId],
+	AudienceClaim = "client_id",
+	RequiredClaims = new Dictionary<string, string> { ["token_use"] = "access" }
+};
+```
+
+**The two are coupled by the framework, not by documentation.** Moving the audience off `aud` also
+moves it off the check that distinguishes an access token from an ID token, so a configuration that
+does the first without supplying a claim that restores the second is rejected at resolution time and
+authenticates no one. The dangerous half cannot be selected alone.
+
+Both are plain data on the tenant record, so a tenant of this shape is a database row rather than a
+code path — no vendor is named anywhere in the framework. `RequiredClaims` is usable on its own for
+any IdP that marks token kind with a claim of its own.
+
+### Tenant-resolution caching
+
+`IExternalTenantResolver` runs on every authenticated request, so a resolver reading tenant rows from
+a database made a round trip per request while JWKS and metadata were already cached. Off by
+default — caching widens the window in which a tenant disabled at the source still authenticates.
+Enable with `TenantResolverCache.DurationSeconds`.
 
 To close that window rather than wait it out, publish `ExternalTenantConfigurationChanged` when a
 tenant's configuration changes; the framework invalidates that tenant's entry on every replica. There
 is no cache interface to implement.
 
-**A named HTTP client for metadata retrieval** — `ExternalDefaults.HttpClientName`, registered with a
-10-second timeout. `HttpClient` defaults to 100 seconds, long enough that a tenant IdP which stops
-responding holds the authenticating request open instead of failing it. Reconfigure the named client
-to supply a proxy, a pinned certificate, or different pooling.
+### A named HTTP client for metadata retrieval
+
+`ExternalDefaults.HttpClientName`, registered with a 10-second timeout. `HttpClient` defaults to 100
+seconds, long enough that a tenant IdP which stops responding holds the authenticating request open
+instead of failing it. Reconfigure the named client to supply a proxy, a pinned certificate, or
+different pooling.
 
 ## Fixed
 
+- **A token carrying no `aud` claim returned 500 instead of 401.** The pre-read used
+  `GetPayloadValue`, which throws when the claim is absent, so the exception escaped
+  `HandleAuthenticateAsync` rather than failing authentication. Omitting `aud` is legal, and it is
+  what AWS Cognito issues — this defect is present in every 1.x version.
 - **Tenant-cache settings never reached the handler's options.** The registrar built one options
   instance for the extractor, scheme selector and cache, and `AddScheme` configured a second for the
   handler, kept in step by a hand-written property-by-property copy that had fallen three properties
