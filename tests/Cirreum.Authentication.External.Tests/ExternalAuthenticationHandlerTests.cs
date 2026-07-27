@@ -95,15 +95,19 @@ public sealed class ExternalAuthenticationHandlerTests {
 		};
 
 	private static async Task<AuthenticateResult> AuthenticateAsync(
-		ExternalTenantConfig tenantConfig,
+		ExternalTenantConfig? tenantConfig,
 		string token,
-		IExternalConfigurationManager? configurationManager = null) {
+		IExternalConfigurationManager? configurationManager = null,
+		Action<ExternalAuthenticationOptions>? configureOptions = null,
+		string? path = null) {
 
 		var options = new ExternalAuthenticationOptions {
 			TenantIdentifierSource = TenantIdentifierSource.Header,
 			TenantHeaderName = ExternalDefaults.DefaultTenantHeaderName,
 			DetailedErrors = true
 		};
+
+		configureOptions?.Invoke(options);
 
 		var monitor = new StaticOptionsMonitor<ExternalAuthenticationOptions>(options);
 
@@ -118,6 +122,9 @@ public sealed class ExternalAuthenticationHandlerTests {
 		var context = new DefaultHttpContext();
 		context.Request.Headers[ExternalDefaults.DefaultTenantHeaderName] = Slug;
 		context.Request.Headers.Authorization = $"Bearer {token}";
+		if (path is not null) {
+			context.Request.Path = path;
+		}
 
 		await handler.InitializeAsync(
 			new AuthenticationScheme(
@@ -239,6 +246,142 @@ public sealed class ExternalAuthenticationHandlerTests {
 
 		result.Succeeded.Should().BeFalse();
 		result.Failure!.Message.Should().Contain("audience");
+	}
+
+	// -------------------------------------------------------------------------
+	// Tenant state and per-tenant policy
+	// -------------------------------------------------------------------------
+
+	[Fact]
+	public async Task A_disabled_tenant_authenticates_no_one() {
+		var token = CreateToken(new Dictionary<string, object> { ["aud"] = ApiAudience });
+
+		var result = await AuthenticateAsync(TenantConfig() with { IsEnabled = false }, token);
+
+		result.Succeeded.Should().BeFalse();
+		result.Failure!.Message.Should().Contain("disabled");
+	}
+
+	[Fact]
+	public async Task An_unresolved_tenant_rejects_by_default() {
+		var result = await AuthenticateAsync(
+			null, CreateToken(new Dictionary<string, object> { ["aud"] = ApiAudience }));
+
+		result.Succeeded.Should().BeFalse();
+		result.None.Should().BeFalse();
+	}
+
+	[Fact]
+	public async Task An_unresolved_tenant_defers_to_other_handlers_under_Fallback() {
+		// Fallback means "this is not ours" rather than "this is refused", so the request must be
+		// left for another scheme rather than failed.
+		var result = await AuthenticateAsync(
+			null,
+			CreateToken(new Dictionary<string, object> { ["aud"] = ApiAudience }),
+			configureOptions: o => o.TenantNotFoundBehavior = TenantNotFoundBehavior.Fallback);
+
+		result.None.Should().BeTrue();
+	}
+
+	[Fact]
+	public async Task An_unresolved_tenant_names_the_slug_under_RejectWithLogging() {
+		var result = await AuthenticateAsync(
+			null,
+			CreateToken(new Dictionary<string, object> { ["aud"] = ApiAudience }),
+			configureOptions: o => o.TenantNotFoundBehavior = TenantNotFoundBehavior.RejectWithLogging);
+
+		result.Succeeded.Should().BeFalse();
+		result.Failure!.Message.Should().Contain(Slug);
+	}
+
+	[Fact]
+	public async Task A_tenant_in_the_path_that_disagrees_with_the_header_is_rejected() {
+		// Defense in depth: an upstream keying on the path while the handler keys on the header is
+		// the classic routing-disagreement shape.
+		var result = await AuthenticateAsync(
+			TenantConfig(),
+			CreateToken(new Dictionary<string, object> { ["aud"] = ApiAudience }),
+			configureOptions: o => o.ValidateTenantInPath = true,
+			path: "/other-tenant/resource");
+
+		result.Succeeded.Should().BeFalse();
+		result.Failure!.Message.Should().Contain("mismatch");
+	}
+
+	[Fact]
+	public async Task A_tenant_in_the_path_that_agrees_with_the_header_proceeds() {
+		var result = await AuthenticateAsync(
+			TenantConfig(),
+			CreateToken(new Dictionary<string, object> { ["aud"] = ApiAudience, ["sub"] = "user-1" }),
+			new StubConfigurationManager(),
+			configureOptions: o => o.ValidateTenantInPath = true,
+			path: $"/{Slug}/resource");
+
+		result.Succeeded.Should().BeTrue(result.Failure?.Message ?? "(no failure recorded)");
+	}
+
+	[Fact]
+	public async Task RequireAccessTokenType_rejects_a_token_typed_JWT() {
+		var token = CreateToken(
+			new Dictionary<string, object> { ["aud"] = ApiAudience }, tokenType: "JWT");
+
+		var result = await AuthenticateAsync(TenantConfig() with { RequireAccessTokenType = true }, token);
+
+		result.Succeeded.Should().BeFalse();
+		result.Failure!.Message.Should().Contain("at+jwt");
+	}
+
+	[Fact]
+	public async Task RequireAccessTokenType_accepts_a_token_typed_at_jwt() {
+		var token = CreateToken(
+			new Dictionary<string, object> { ["aud"] = ApiAudience, ["sub"] = "user-1" },
+			tokenType: "at+jwt");
+
+		var result = await AuthenticateAsync(
+			TenantConfig() with { RequireAccessTokenType = true }, token, new StubConfigurationManager());
+
+		result.Succeeded.Should().BeTrue(result.Failure?.Message ?? "(no failure recorded)");
+	}
+
+	[Fact]
+	public async Task A_signing_algorithm_outside_the_tenants_list_is_rejected() {
+		// The token is signed HS256; this tenant accepts only RS256.
+		var token = CreateToken(new Dictionary<string, object> { ["aud"] = ApiAudience, ["sub"] = "u" });
+
+		var result = await AuthenticateAsync(
+			TenantConfig() with { ValidAlgorithms = ["RS256"] }, token, new StubConfigurationManager());
+
+		result.Succeeded.Should().BeFalse();
+	}
+
+	[Fact]
+	public async Task A_claim_mapping_renames_a_tenants_claim() {
+		var token = CreateToken(new Dictionary<string, object> {
+			["aud"] = ApiAudience,
+			["sub"] = "user-1",
+			["groups"] = "engineering"
+		});
+
+		var tenantConfig = TenantConfig() with {
+			ClaimMappings = new Dictionary<string, string> { ["groups"] = "roles" }
+		};
+
+		var result = await AuthenticateAsync(tenantConfig, token, new StubConfigurationManager());
+
+		result.Succeeded.Should().BeTrue(result.Failure?.Message ?? "(no failure recorded)");
+		result.Principal!.FindFirst("roles")!.Value.Should().Be("engineering");
+		result.Principal.FindFirst("groups").Should().BeNull();
+	}
+
+	[Fact]
+	public async Task DetailedErrors_off_withholds_the_reason() {
+		var result = await AuthenticateAsync(
+			TenantConfig() with { IsEnabled = false },
+			CreateToken(new Dictionary<string, object> { ["aud"] = ApiAudience }),
+			configureOptions: o => o.DetailedErrors = false);
+
+		result.Succeeded.Should().BeFalse();
+		result.Failure!.Message.Should().Be("Authentication failed");
 	}
 
 	// -------------------------------------------------------------------------

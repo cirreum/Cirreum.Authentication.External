@@ -19,26 +19,10 @@ upgrade, a coordinated multi-repo rollout).
 
 ## Queued
 
-### Deepen test coverage: the handler request path
-
-**SemVer:** Patch
-**Trigger:** Next substantive change to the External scheme's validation or resolution flow.
-**Noted:** 2026-07-18 *(shrunk 2026-07-19 — the original item's test project, composition-path
-tests for `AddExternalTenantResolver<T>`, and `TenantIdentifierExtractor` coverage shipped.
-Shrunk again 2026-07-26 — `ExternalConfigurationManager` now has `RequireHttpsMetadata`
-enforcement and refresh coverage, and `ExternalAuthenticationHandlerTests` establishes the handler
-harness.)*
-
-The harness now exists in `ExternalAuthenticationHandlerTests` and covers the pre-checks that run
-before signature validation. What it does not yet reach is anything past step 8, because that needs
-a stub metadata document and signing key: the successful-validation path, claim normalization via
-`ClaimMappings`, `TenantNotFoundBehavior` branches, `ValidateTenantInPath`, and
-`RequireAccessTokenType`. `ExternalAuthenticationSchemeSelector` is also still uncovered.
-
 ### Verify a real AWS Cognito tenant end to end
 
-**SemVer:** Unspecified
-**Trigger:** A prospective tenant runs AWS Cognito.
+**SemVer:** Unspecified  
+**Trigger:** A prospective tenant runs AWS Cognito.  
 **Noted:** 2026-07-26
 
 `AudienceClaim` + `RequiredClaims` shipped in 2.0.0 to make a Cognito-shaped tenant expressible
