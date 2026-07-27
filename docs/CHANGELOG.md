@@ -73,6 +73,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) — [SemVer](ht
 
 ### Fixed
 
+- **A blank configured audience matched a blank token audience.** `ValidAudiences` is `required`, but
+  nothing stopped it holding an empty string, and a token presenting an empty audience then compared
+  equal — a missing configuration becoming an acceptance rather than a rejection. Blank and
+  whitespace-only entries are now discarded before comparison, and a tenant left with no usable entry
+  is refused outright rather than validated against an empty set. Applies to both the standard `aud`
+  path and a relocated `AudienceClaim`.
 - **A token carrying no `aud` claim crashed the request instead of failing authentication.** The
   pre-read used `GetPayloadValue`, which throws when the claim is absent, so the exception escaped
   `HandleAuthenticateAsync` and surfaced as a 500 rather than a 401. Omitting `aud` is legal, and it

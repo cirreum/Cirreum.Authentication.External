@@ -36,10 +36,18 @@ public record ExternalTenantConfig {
 	/// At least one audience must match for the token to be valid.
 	/// </summary>
 	/// <remarks>
+	/// <para>
 	/// These must name <strong>your API</strong>, never a client ID. This is the boundary between an
 	/// access token and an ID token: an access token's audience is the API it was issued for, while
 	/// an ID token's audience is the client that requested sign-in. List a client ID here and ID
 	/// tokens issued to that client will validate successfully.
+	/// </para>
+	/// <para>
+	/// Blank and whitespace-only entries are discarded before comparison, so a record with an empty
+	/// audience string cannot be matched by a token presenting an empty one. A tenant left with no
+	/// usable entry authenticates no one — an unconfigured audience is refused rather than treated
+	/// as "any".
+	/// </para>
 	/// </remarks>
 	public required IReadOnlyList<string> ValidAudiences { get; init; }
 

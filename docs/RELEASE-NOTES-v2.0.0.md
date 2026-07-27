@@ -97,6 +97,11 @@ different pooling.
 
 ## Fixed
 
+- **A blank configured audience matched a blank token audience.** `ValidAudiences` is `required`, but
+  nothing stopped it holding an empty string — and a token presenting an empty audience then compared
+  equal, turning a missing configuration into an acceptance. Blank and whitespace-only entries are
+  now discarded before comparison, and a tenant left with no usable entry authenticates no one.
+  Present in every 1.x version.
 - **A token carrying no `aud` claim returned 500 instead of 401.** The pre-read used
   `GetPayloadValue`, which throws when the claim is absent, so the exception escaped
   `HandleAuthenticateAsync` rather than failing authentication. Omitting `aud` is legal, and it is

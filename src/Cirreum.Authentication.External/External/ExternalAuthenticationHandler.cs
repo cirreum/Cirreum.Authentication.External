@@ -135,6 +135,22 @@ public class ExternalAuthenticationHandler(
 		var usesStandardAudience = string.Equals(
 			tenantConfig.AudienceClaim, ExternalDefaults.DefaultAudienceClaim, StringComparison.Ordinal);
 
+		// Blank entries are dropped rather than compared. A tenant record carrying an empty audience
+		// string would otherwise match a token presenting an empty one — a blank value that becomes
+		// an acceptance instead of a rejection. Once dropped, a config with nothing left has
+		// configured no audience at all, which is refused rather than allowed to validate against an
+		// empty set.
+		var validAudiences = tenantConfig.ValidAudiences.Where(audience => audience.HasValue()).ToArray();
+
+		if (validAudiences.Length == 0) {
+			this.Logger.LogError(
+				"Tenant {TenantSlug} has no non-blank entries in ValidAudiences. The audience is what " +
+				"separates an access token issued for this API from an ID token issued for a client, " +
+				"so there is no configuration under which this tenant can authenticate safely.",
+				tenantSlug);
+			return this.FailWithMessage("Tenant configuration is invalid");
+		}
+
 		// A tenant that moves the audience off `aud` has moved it off the check that separates an
 		// access token from an ID token, so it must supply something that does. Refusing the
 		// configuration outright is the point: the alternative is a tenant silently accepting ID
@@ -176,8 +192,8 @@ public class ExternalAuthenticationHandler(
 					? aud
 					: null;
 
-			if (actualAudience is null
-				|| !tenantConfig.ValidAudiences.Contains(actualAudience, StringComparer.Ordinal)) {
+			if (!actualAudience.HasValue()
+				|| !validAudiences.Contains(actualAudience, StringComparer.Ordinal)) {
 
 				this.Logger.LogWarning(
 					"Audience validation failed for tenant {TenantSlug}: claim '{AudienceClaim}' was '{Actual}'",
@@ -222,9 +238,9 @@ public class ExternalAuthenticationHandler(
 			ValidateIssuer = true,
 			ValidIssuer = tenantConfig.ValidIssuerOverride ?? oidcConfig.Issuer,
 			// Off only when the tenant carries its audience in another claim, which step 7c has
-			// already checked against these same ValidAudiences. It is never simply skipped.
+			// already checked against these same audiences. It is never simply skipped.
 			ValidateAudience = usesStandardAudience,
-			ValidAudiences = tenantConfig.ValidAudiences,
+			ValidAudiences = validAudiences,
 			ValidateLifetime = true,
 			ValidateIssuerSigningKey = true,
 			IssuerSigningKeys = oidcConfig.SigningKeys,

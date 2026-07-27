@@ -64,12 +64,13 @@ public sealed class ExternalAuthenticationHandlerTests {
 
 	private static ExternalTenantConfig TenantConfig(
 		string audienceClaim = ExternalDefaults.DefaultAudienceClaim,
-		IReadOnlyDictionary<string, string>? requiredClaims = null) =>
+		IReadOnlyDictionary<string, string>? requiredClaims = null,
+		IReadOnlyList<string>? validAudiences = null) =>
 		new() {
 			Slug = Slug,
 			IsEnabled = true,
 			MetadataAddress = $"{Issuer}.well-known/openid-configuration",
-			ValidAudiences = [ApiAudience],
+			ValidAudiences = validAudiences ?? [ApiAudience],
 			AudienceClaim = audienceClaim,
 			RequiredClaims = requiredClaims
 		};
@@ -119,6 +120,56 @@ public sealed class ExternalAuthenticationHandlerTests {
 
 		result.Succeeded.Should().BeFalse();
 		result.Failure!.Message.Should().Contain("Tenant configuration is invalid");
+	}
+
+	[Theory]
+	[InlineData("")]
+	[InlineData("   ")]
+	public async Task A_blank_configured_audience_never_matches_a_blank_token_audience(string blank) {
+		// The blank-value escape: a tenant record carrying an empty audience string would match a
+		// token presenting an empty one, turning a missing configuration into an acceptance. Both
+		// sides are blank here, so anything that compares them without checking would let it pass.
+		var token = CreateToken(new Dictionary<string, object> {
+			["token_use"] = "access",
+			["client_id"] = blank
+		});
+
+		var result = await AuthenticateAsync(
+			TenantConfig(
+				audienceClaim: "client_id",
+				requiredClaims: new Dictionary<string, string> { ["token_use"] = "access" },
+				validAudiences: [blank]),
+			token);
+
+		result.Succeeded.Should().BeFalse();
+		result.Failure!.Message.Should().Contain("Tenant configuration is invalid");
+	}
+
+	[Fact]
+	public async Task A_tenant_with_no_configured_audiences_authenticates_no_one() {
+		var token = CreateToken(new Dictionary<string, object> { ["aud"] = ApiAudience });
+
+		var result = await AuthenticateAsync(TenantConfig(validAudiences: []), token);
+
+		result.Succeeded.Should().BeFalse();
+		result.Failure!.Message.Should().Contain("Tenant configuration is invalid");
+	}
+
+	[Fact]
+	public async Task A_blank_token_audience_is_rejected_against_a_real_configured_audience() {
+		var token = CreateToken(new Dictionary<string, object> {
+			["token_use"] = "access",
+			["client_id"] = ""
+		});
+
+		var result = await AuthenticateAsync(
+			TenantConfig(
+				audienceClaim: "client_id",
+				requiredClaims: new Dictionary<string, string> { ["token_use"] = "access" }),
+			token);
+
+		result.Succeeded.Should().BeFalse();
+		result.Failure!.Message.Should().Contain("audience");
 	}
 
 	[Fact]
