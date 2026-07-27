@@ -94,12 +94,12 @@ public class ExternalAuthenticationHandler(
 		}
 
 		if (parsedToken is not null) {
-			tokenIssuer = parsedToken.Issuer;
+			tokenIssuer = parsedToken.Issuer.NullIfWhiteSpace();
 			tokenAudiences = ReadClaimValues(parsedToken, ExternalDefaults.DefaultAudienceClaim);
-			tokenType = parsedToken.Typ;
+			tokenType = parsedToken.Typ.NullIfWhiteSpace();
 			// Try azp first (OAuth 2.0), then client_id (some IdPs use this)
-			tokenClientId = parsedToken.TryGetPayloadValue<string>("azp", out var azp) ? azp : null;
-			tokenClientId ??= parsedToken.TryGetPayloadValue<string>("client_id", out var cid) ? cid : null;
+			tokenClientId = parsedToken.Azp.NullIfWhiteSpace();
+			tokenClientId ??= parsedToken.TryGetPayloadValue<string>("client_id", out var cid) ? cid.NullIfWhiteSpace() : null;
 		}
 
 		// Nothing in OpenID Connect marks a token as an ID token — there is no standard `typ` value
@@ -362,12 +362,15 @@ public class ExternalAuthenticationHandler(
 					? mappedType
 					: claim.Type;
 
+			// Checked after mapping, deliberately. Checking the source type would miss a mapping that
+			// targets a reserved name — the route that makes this exploitable — and would discard a
+			// claim the tenant is legitimately renaming out of the way.
 			if (ExternalReservedClaimTypes.Contains(claimType)) {
 				this.Logger.LogWarning(
-					"Discarded a reserved claim '{ClaimType}' arriving from tenant {TenantSlug}'s token. " +
-					"The framework stamps this claim itself; a token or claim mapping supplying it cannot " +
-					"be allowed to shadow the resolved value.",
-					claimType, tenantConfig.Slug);
+					"Discarded a reserved claim from tenant {TenantSlug}: '{SourceClaimType}' would have become " +
+					"'{ClaimType}', which the framework stamps itself. Neither a token claim nor a ClaimMappings " +
+					"entry may shadow the resolved value; map it to a different name if the application reads it.",
+					tenantConfig.Slug, claim.Type, claimType);
 				continue;
 			}
 
