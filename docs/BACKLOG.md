@@ -35,20 +35,29 @@ What remains is the request-path machinery that needs a real harness:
 `SessionTicketAuthenticationHandlerTests` / the ApiKey handler tests (DefaultHttpContext + scheme
 + NullLogger).
 
-### Confirm whether AWS Cognito tenants can validate at all
+### Support AWS Cognito tenants: audience opt-out coupled to a token-use requirement
 
-**SemVer:** Unspecified
+**SemVer:** Minor
 **Trigger:** A prospective tenant runs AWS Cognito.
 **Noted:** 2026-07-26
 
-Cognito access tokens are reported to omit `aud` entirely, carrying `client_id` in its place.
-`ExternalAuthenticationHandler` sets `ValidateAudience = true` unconditionally, so if that holds,
-a Cognito tenant's access tokens fail validation outright and External cannot serve them. Confirm
-against a real Cognito token before deciding anything — this came out of a code review, not a
-failed integration.
+Cognito does not fit the audience-validation model External relies on. Its **access** tokens put the
+app client ID in `client_id` and may carry no `aud` at all, unless resource binding adds one. Its
+**ID** tokens put the app client ID in `aud`. `ExternalAuthenticationHandler` sets
+`ValidateAudience = true` unconditionally, so a Cognito tenant's access tokens fail validation today
+and External cannot serve them.
 
-If it holds, the options are a per-tenant audience opt-out paired with the existing
-`AllowedClientIds` check (which already validates `client_id`), or documenting Cognito as
-unsupported. What must not happen is a general "audience optional" switch: audience validation
-being mandatory and fail-closed is the entire reason an ID token presented as an access token
-cannot pass, and there is no standard token claim to fall back on if it is relaxed.
+Cognito does mark the distinction, in a claim inside the JWT: `token_use` is `"access"` or `"id"`.
+(Not to be confused with `access_token`, the OAuth *response field* carrying the JWT — `token_use` is
+a claim within it.) No other IdP emits it, so it can never be required globally.
+
+**Implement the two halves together or not at all.** Relaxing audience validation for a tenant is
+what makes `token_use` load-bearing: audience validation is otherwise the only thing stopping an ID
+token being replayed as a bearer token, and OpenID Connect defines no standard marker for an ID
+token to fall back on. A per-tenant shape along the lines of "validate `client_id` against
+`AllowedClientIds` instead of `aud`, **and** require `token_use == access`" keeps them inseparable,
+so no configuration can select the dangerous half alone.
+
+What must not ship is a bare `ValidateAudience: false` switch, or a standalone `token_use` check —
+the first removes the defense, the second looks like a replacement for it while applying to one
+vendor.

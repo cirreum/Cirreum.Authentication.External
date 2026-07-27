@@ -2,7 +2,7 @@
 
 All notable changes to **Cirreum.Authentication.External** are documented in this file.
 
-Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) â€” [SemVer](https://semver.org/spec/v2.0.0.html).
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) — [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ---
 
@@ -97,7 +97,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) â€” [SemVe
 ### Fixed
 
 - **The scheme is now registered under the configured instance key**, as the framework
-  contract requires ("the instance key IS the scheme name" â€” the base registrar stamps it onto
+  contract requires ("the instance key IS the scheme name" — the base registrar stamps it onto
   `settings.Scheme`). The registrar previously hardcoded `ExternalDefaults.AuthenticationScheme`
   for both `AddScheme` and the `ISchemeSelector`, so a host whose instance key was anything else
   (the documented sample used `default`) had its selector stamp a scheme name that no
@@ -111,9 +111,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) â€” [SemVe
   authentication options were materialized. The guard is collection-scoped, so multiple hosts
   composed in one process stay isolated.
 - **README examples now compile against the shipped API.** The tenant-resolver sample used a
-  `ResolveAsync(string, â€¦)` signature and an `ExternalTenantConfig { Authority, Audience }`
-  initializer, neither of which exists â€” the real seam is
-  `ResolveAsync(ExternalResolutionContext, â€¦)` returning the required `Slug` / `IsEnabled` /
+  `ResolveAsync(string, …)` signature and an `ExternalTenantConfig { Authority, Audience }`
+  initializer, neither of which exists — the real seam is
+  `ResolveAsync(ExternalResolutionContext, …)` returning the required `Slug` / `IsEnabled` /
   `MetadataAddress` / `ValidAudiences`. The registration snippet also bypassed the shipped
   `AddExternalTenantResolver<T>()` composition verb, and the selector was described with a
   `SchemeCategory` that does not exist.
@@ -121,8 +121,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) â€” [SemVe
 ### Changed
 
 - **`AddExternalTenantResolver<T>()` registers the resolver as `Scoped` by default** (was
-  `Singleton`), and takes an optional `ServiceLifetime`. Every documented example â€” including
-  the one on `IExternalTenantResolver` itself â€” injects a scoped store (`DbContext`,
+  `Singleton`), and takes an optional `ServiceLifetime`. Every documented example — including
+  the one on `IExternalTenantResolver` itself — injects a scoped store (`DbContext`,
   `IDbConnection`); registering those as a singleton is a captive dependency that throws under
   scope validation, which is on by default in Development. A resolver that holds its own cache
   and takes no scoped dependencies can pass `lifetime: ServiceLifetime.Singleton`.
@@ -157,16 +157,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) â€” [SemVe
 - **Renamed and re-homed from the deprecated `Cirreum.Authorization.External`** following the Three Security Pillars separation.
 - Multi-tenant JWT validation with tenant-indicator resolution (header / path-segment / subdomain) per `TenantIdentifierSource`.
 - Per-tenant JWKS caching via `IExternalConfigurationManager`.
-- Pluggable `IExternalTenantResolver` â€” apps implement this to map a tenant indicator to a tenant config (Authority, Audience, etc.) from their own data store.
+- Pluggable `IExternalTenantResolver` — apps implement this to map a tenant indicator to a tenant config (Authority, Audience, etc.) from their own data store.
 - `TenantNotFoundBehavior` controls handling of unknown tenants: `Reject`, `RejectWithLogging`, `Fallback`.
-- **NEW â€” `ExternalAuthenticationSchemeSelector`** implements the `ISchemeSelector` contract with `SchemeCategory.Tenant`. The dynamic forward resolver picks the External scheme when a tenant indicator + `Authorization: Bearer` header are both present. **Replaces** the legacy static `ExternalSchemeSelector` helper class (logic preserved; shape upgraded to the new contract).
+- **NEW — `ExternalAuthenticationSchemeSelector`** implements the `ISchemeSelector` contract with `SchemeCategory.Tenant`. The dynamic forward resolver picks the External scheme when a tenant indicator + `Authorization: Bearer` header are both present. **Replaces** the legacy static `ExternalSchemeSelector` helper class (logic preserved; shape upgraded to the new contract).
 
 ### Changed
 
-- `RegisterScheme` no longer calls the retired `AuthorizationSchemeRegistry.RegisterCustomScheme(...)` â€” registration moves to the new `ISchemeSelector` model.
+- `RegisterScheme` no longer calls the retired `AuthorizationSchemeRegistry.RegisterCustomScheme(...)` — registration moves to the new `ISchemeSelector` model.
 - Dropped redundant explicit `Microsoft.AspNetCore.DataProtection` package reference.
 - Dropped explicit `Cirreum.Core 5.x` reference (replaced by transitive Kernel reach via Cirreum.AuthenticationProvider for `Cirreum.Security` types).
 
 ### Migration
 
-Apps consuming `Cirreum.Authorization.External` migrate by installing `Cirreum.Authentication.External` and switching their composition root from `AddAuthorization(...)` to `AddAuthentication(...)`. The static `ExternalSchemeSelector` is gone â€” apps wiring `ForwardDefaultSelector` lambdas around it will need to switch to the new `ISchemeSelector` registration model. See [`docs/MIGRATION-v1.md`](MIGRATION-v1.md).
+Apps consuming `Cirreum.Authorization.External` migrate by installing `Cirreum.Authentication.External` and switching their composition root from `AddAuthorization(...)` to `AddAuthentication(...)`. The static `ExternalSchemeSelector` is gone — apps wiring `ForwardDefaultSelector` lambdas around it will need to switch to the new `ISchemeSelector` registration model. See [`docs/MIGRATION-v1.md`](MIGRATION-v1.md).
