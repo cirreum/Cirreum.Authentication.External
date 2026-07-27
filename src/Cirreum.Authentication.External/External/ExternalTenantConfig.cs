@@ -5,6 +5,7 @@ namespace Cirreum.Authentication.External;
 /// Returned by <see cref="IExternalTenantResolver"/> to configure JWT validation.
 /// </summary>
 public record ExternalTenantConfig {
+
 	/// <summary>
 	/// The tenant's unique slug/identifier.
 	/// </summary>
@@ -70,16 +71,23 @@ public record ExternalTenantConfig {
 	public IReadOnlyList<string>? AllowedClientIds { get; init; }
 
 	/// <summary>
-	/// Whether to require the token to be an access token (typ: at+jwt).
+	/// Whether to require the token to carry the RFC 9068 access-token type (<c>typ: at+jwt</c>).
 	/// </summary>
 	/// <remarks>
 	/// <para>
-	/// When enabled, tokens must have <c>typ: "at+jwt"</c> in the header per RFC 9068.
+	/// Enable only for a tenant whose IdP is known to emit it. RFC 9068 defines a profile that an
+	/// access token may conform to, not a requirement on OAuth access tokens generally: an IdP may
+	/// equally issue <c>typ: "JWT"</c>, omit <c>typ</c> altogether — it is optional under RFC 7519 —
+	/// or mark the token's kind with a claim of its own. Requiring <c>at+jwt</c> of a tenant whose
+	/// IdP does none of those rejects every token they present.
 	/// </para>
 	/// <para>
-	/// Default is <c>false</c> because many IdPs still use <c>typ: "JWT"</c> for access tokens.
-	/// Regardless of this setting, tokens with missing <c>typ</c> or <c>typ: "id_token"</c> are always rejected.
+	/// This is a narrowing check, not the boundary between an access token and an ID token. That
+	/// boundary is <see cref="ValidAudiences"/>, which must name this API: an access token's
+	/// audience is the API it was issued for, while an ID token's audience is the client that
+	/// requested sign-in.
 	/// </para>
 	/// </remarks>
 	public bool RequireAccessTokenType { get; init; }
+
 }
