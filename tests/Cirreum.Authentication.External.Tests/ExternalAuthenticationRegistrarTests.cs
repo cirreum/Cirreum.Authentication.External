@@ -2,6 +2,7 @@ namespace Cirreum.Authentication.External.Tests;
 
 using Cirreum.Authentication.Configuration;
 using Cirreum.AuthenticationProvider;
+using Cirreum.Security;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -33,15 +34,45 @@ public sealed class ExternalAuthenticationRegistrarTests {
 	// AddAuthentication() rather than new AuthenticationBuilder(services): it registers what
 	// AddScheme's post-configure depends on (TimeProvider, data protection, encoders), so
 	// materializing scheme options here exercises the pipeline a real host builds.
-	private static (IServiceCollection Services, AuthenticationBuilder AuthBuilder) NewComposition() {
+	private static (IServiceCollection Services, IAuthenticationBuilder AuthBuilder) NewComposition() {
 		var services = new ServiceCollection();
 		services.AddLogging();
-		return (services, services.AddAuthentication());
+		return (services, new TestAuthenticationBuilder(
+			services,
+			services.AddAuthentication(),
+			new ConfigurationBuilder().Build()));
 	}
 
-	private static void Register(ExternalAuthenticationSettings settings, IServiceCollection services, AuthenticationBuilder authBuilder) =>
-		new ExternalAuthenticationRegistrar().Register(
-			settings, services, new ConfigurationBuilder().Build(), authBuilder);
+	private static void Register(ExternalAuthenticationSettings settings, IServiceCollection services, IAuthenticationBuilder authBuilder) =>
+		new ExternalAuthenticationRegistrar().Register(settings, authBuilder);
+
+	private sealed class TestAuthenticationBuilder(
+		IServiceCollection services,
+		AuthenticationBuilder authBuilder,
+		IConfiguration configuration) : IAuthenticationBuilder {
+
+		public IServiceCollection Services { get; } = services;
+		public AuthenticationBuilder AuthBuilder { get; } = authBuilder;
+		public IConfiguration Configuration { get; } = configuration;
+
+		public IAuthenticationBuilder DeclareScheme(string scheme, Cirreum.Security.SubjectKind subjectKind,
+			Cirreum.Security.ClaimAuthority profile = Cirreum.Security.ClaimAuthority.Unspecified,
+			Cirreum.Security.ClaimAuthority roles = Cirreum.Security.ClaimAuthority.Unspecified) {
+			this.Services.AddSingleton(new SchemeClaimAuthorityRegistration(scheme, subjectKind, profile, roles));
+			return this;
+		}
+
+		public IAuthenticationBuilder AddScheme<TOptions, THandler>(string scheme, Cirreum.Security.SubjectKind subjectKind,
+			Cirreum.Security.ClaimAuthority profile = Cirreum.Security.ClaimAuthority.Unspecified,
+			Cirreum.Security.ClaimAuthority roles = Cirreum.Security.ClaimAuthority.Unspecified,
+			Action<TOptions>? configureOptions = null)
+			where TOptions : AuthenticationSchemeOptions, new()
+			where THandler : AuthenticationHandler<TOptions> {
+			this.DeclareScheme(scheme, subjectKind, profile, roles);
+			this.AuthBuilder.AddScheme<TOptions, THandler>(scheme, configureOptions);
+			return this;
+		}
+	}
 
 	// -------------------------------------------------------------------------
 	// Scheme name == instance key

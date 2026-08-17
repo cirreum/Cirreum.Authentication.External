@@ -90,9 +90,9 @@ public sealed class ExternalAuthenticationRegistrar
 	protected override void RegisterScheme(
 		string key,
 		ExternalAuthenticationInstanceSettings settings,
-		IServiceCollection services,
-		IConfiguration configuration,
-		AuthenticationBuilder authBuilder) {
+		IAuthenticationBuilder builder) {
+
+		var services = builder.Services;
 
 		// External serves every tenant through one scheme, resolving each tenant's issuer at
 		// request time via IExternalTenantResolver — per-tenant variance is data, not
@@ -120,10 +120,15 @@ public sealed class ExternalAuthenticationRegistrar
 		// is that the instance key IS the scheme name (the base registrar stamps it onto
 		// settings.Scheme), and every downstream per-scheme lookup — the AuthenticatedScheme
 		// stamp, IApplicationUserResolver dispatch, boundary resolution — keys off that name.
+		// Registered and declared through the builder, carrying the instance's ClaimAuthority
+		// block — this registrar overrides RegisterScheme wholesale, so it declares for itself.
 		// Note: The handler will fail gracefully if IExternalTenantResolver is not registered.
 		// The resolver is added via the AddExternalTenantResolver<T>() extension method.
-		authBuilder.AddScheme<ExternalAuthenticationOptions, ExternalAuthenticationHandler>(
+		builder.AddScheme<ExternalAuthenticationOptions, ExternalAuthenticationHandler>(
 			scheme,
+			this.SubjectKind,
+			settings.ClaimAuthority.Profile,
+			settings.ClaimAuthority.Roles,
 			configureOptions: o => ApplySettings(settings, o));
 
 		// AuthenticationHandler<TOptions> reads its options through IOptionsMonitor.Get(scheme), so

@@ -11,7 +11,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) — [SemVer](ht
 ### Added
 
 - **Declares `SubjectKind.Human`.** BYOID schemes federate a customer's own identity provider —
-  the caller is that customer's user, not the tenant as a thing.
+  the caller is that customer's user, not the tenant as a thing. The registrar registers and
+  declares the scheme in one call through `IAuthenticationBuilder.AddScheme` (the registration
+  funnel, `Cirreum.AuthenticationProvider` 3.0.1), carrying the instance's `ClaimAuthority`
+  block — this registrar overrides `RegisterScheme` wholesale, so it declares for itself.
+
+### Changed
+
+- `RegisterScheme` takes `IAuthenticationBuilder` per the `Cirreum.AuthenticationProvider` 3.0.1
+  contract consolidation. Registrar plumbing only; not app-facing surface.
 
 ### Updated
 
