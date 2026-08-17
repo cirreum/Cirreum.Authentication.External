@@ -3,6 +3,7 @@ namespace Cirreum.Authentication;
 using Cirreum.AuthenticationProvider;
 using Cirreum.Authentication.Configuration;
 using Cirreum.Authentication.External;
+using Cirreum.Security;
 
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Configuration;
@@ -33,6 +34,13 @@ public sealed class ExternalAuthenticationRegistrar
 
 	/// <inheritdoc/>
 	public override string ProviderName => "External";
+
+	/// <inheritdoc/>
+	/// <remarks>
+	/// BYOID schemes federate a customer's own identity provider — the caller is that customer's
+	/// user, not the tenant as a thing.
+	/// </remarks>
+	public override SubjectKind SubjectKind => SubjectKind.Human;
 
 	/// <inheritdoc/>
 	public override void ValidateSettings(ExternalAuthenticationInstanceSettings settings) {

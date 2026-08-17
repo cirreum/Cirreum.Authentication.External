@@ -8,6 +8,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) — [SemVer](ht
 
 ## [Unreleased]
 
+### Added
+
+- **Declares `SubjectKind.Human`.** BYOID schemes federate a customer's own identity provider —
+  the caller is that customer's user, not the tenant as a thing.
+
+### Updated
+
+- Updated NuGet packages.
+
 ## [2.0.3] - 2026-08-04
 
 ### Updated
