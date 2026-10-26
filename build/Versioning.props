@@ -5,7 +5,7 @@
 
 		<MajorProductVersion Condition="'$(MajorProductVersion)' == ''">2</MajorProductVersion>
 		<MinorProductVersion Condition="'$(MinorProductVersion)' == ''">1</MinorProductVersion>
-		<PatchProductVersion Condition="'$(PatchProductVersion)' == ''">6</PatchProductVersion>
+		<PatchProductVersion Condition="'$(PatchProductVersion)' == ''">7</PatchProductVersion>
 
 		<VersionPrefix Condition="'$(VersionPrefix)' == ''">$(MajorProductVersion).$(MinorProductVersion).$(PatchProductVersion)</VersionPrefix>
 		<Version Condition="'$(Version)' == ''">$(VersionPrefix)$(VersionSuffix)</Version>

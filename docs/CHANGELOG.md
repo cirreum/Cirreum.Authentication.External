@@ -8,6 +8,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) — [SemVer](ht
 
 ## [Unreleased]
 
+## [2.1.7] - 2026-10-26
+
 ### Updated
 
 - **`Cirreum.Domain`** — `5.1.0` → `5.1.1` (re-pinned against `Cirreum.Contracts` 6.2.0, host invocations). Where referenced, **`Cirreum.Messaging.Distributed`** — `2.0.6` → `2.1.0` (envelope `Subject`).
